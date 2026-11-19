@@ -8,9 +8,8 @@ description = "PNG decoder with strict resource limits: Go image/png behaviour a
 publish = false
 
 # The owner's private port, pinned by rev (never crates.io). Needs `zlib::Reader::with_buffer` /
-# `into_buffer`; the rev moves once deflate-rs has them.
 [dependencies]
-deflate = { git = "https://github.com/dobbo-ca/deflate-rs", rev = "c0067972473b603917dfbf9c89a531d48f77cdf5" }
+deflate = { git = "https://github.com/dobbo-ca/deflate-rs", rev = "442a2925289bc8ffc7dcf87076db8b76e645bf08" }
 
 # The tests decode whole images; the dependencies run optimised under `cargo test`, this crate
 # keeps overflow checks and debug assertions.

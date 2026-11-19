@@ -125,7 +125,7 @@ fn decoder_reuse_equals_fresh() {
                     };
                     let reused = dec
                         .decode_into(data, fmt, &mut out, &o, &limits, &cancel)
-                        .map(|i| i.clone());
+                        .cloned();
                     match (fresh, reused) {
                         (Ok((fi, fb)), Ok(ri)) => {
                             assert_eq!(fi, ri, "{name}");

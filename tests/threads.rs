@@ -130,7 +130,7 @@ fn max_threads() {
             }
             if let Some(base) = base {
                 assert!(
-                    peak <= base + n - 1,
+                    peak < base + n,
                     "max_threads {n}: peak {peak} threads, baseline {base}"
                 );
             }
