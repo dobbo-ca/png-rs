@@ -1,0 +1,22 @@
+[package]
+name = "png"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+license = "Apache-2.0"
+description = "PNG decoder with strict resource limits: Go image/png behaviour and a libpng-lenient profile. Written for dobbo-ca; not a port."
+publish = false
+
+# The owner's private port, pinned by rev (never crates.io). Needs `zlib::Reader::with_buffer` /
+# `into_buffer`; the rev moves once deflate-rs has them.
+[dependencies]
+deflate = { git = "https://github.com/dobbo-ca/deflate-rs", rev = "c0067972473b603917dfbf9c89a531d48f77cdf5" }
+
+# The tests decode whole images; the dependencies run optimised under `cargo test`, this crate
+# keeps overflow checks and debug assertions.
+[profile.dev.package."*"]
+opt-level = 2
+
+# One codegen unit, so the decode loops inline across modules.
+[profile.release]
+codegen-units = 1

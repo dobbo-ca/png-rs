@@ -1,0 +1,110 @@
+name: fuzz
+on:
+  # A new 12:23 UTC slot: all 14 standard slots (day x 06/18 UTC) are taken.
+  schedule: [{ cron: '23 12 * * 3' }]
+  workflow_dispatch:
+    inputs:
+      max_total_time:
+        description: Seconds per target
+        default: '600'
+      only:
+        description: Run only this target (empty = all)
+        default: ''
+permissions:
+  contents: read
+# A new run waits for the one before it; it does not cancel it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  plan:
+    runs-on: github-arc-runner-set
+    outputs:
+      targets: ${{ steps.p.outputs.targets }}
+    steps:
+      - id: p
+        env:
+          ONLY: ${{ inputs.only }}
+        run: |
+          all="decode rows decoder_reuse read_info unfilter_simd threads"
+          case "$ONLY" in
+            '') list=$all ;;
+            *) case " $all " in *" $ONLY "*) list=$ONLY ;; *) echo "unknown target $ONLY" >&2; exit 1 ;; esac ;;
+          esac
+          echo "targets=[$(echo $list | sed 's/[a-z_][a-z_]*/"&"/g; s/" "/","/g')]" >> "$GITHUB_OUTPUT"
+  fuzz:
+    needs: plan
+    runs-on: github-arc-runner-set
+    strategy:
+      fail-fast: false
+      # The ARC runners are shared (kleio CI too): two fuzz jobs at a time, at most.
+      max-parallel: 2
+      matrix:
+        target: ${{ fromJSON(needs.plan.outputs.targets) }}
+    timeout-minutes: 60
+    env:
+      MAX_TOTAL_TIME: ${{ inputs.max_total_time || '600' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { lfs: false }
+      - id: app
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ vars.CI_READ_APP_ID }}
+          private-key: ${{ secrets.CI_READ_APP_KEY }}
+          owner: dobbo-ca
+          repositories: deflate-rs
+          permission-contents: read
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+        with:
+          driver: remote
+          endpoint: tcp://buildkitd.github-arc.svc.cluster.local:1234
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: .github/ci/Dockerfile
+          target: fuzz
+          load: true
+          push: false
+          secrets: |
+            gh_token=${{ steps.app.outputs.token }}
+          tags: png-fuzz:local
+          cache-from: type=gha,scope=png-rs-fuzz
+          cache-to: type=gha,mode=max,scope=png-rs-fuzz
+      # The corpus is kept between runs: restored here, copied into the container, copied back
+      # out and saved, so a run goes on from where the last one stopped. One cache per target.
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: corpus
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
+          restore-keys: fuzz-corpus-${{ matrix.target }}-
+      # docker create + start, not a RUN layer: a BuildKit cache hit would skip the fuzzing.
+      # Seeds: PngSuite and the byblos fixtures (tests/fuzz/seeds, copied in the image build) and the
+      # fuzz-grown files; new inputs go to the first corpus dir.
+      - run: |
+          mkdir -p corpus/${{ matrix.target }}
+          docker create --name fuzz -e MAX_TOTAL_TIME -e TARGET=${{ matrix.target }} png-fuzz:local \
+            sh -c 'mkdir -p tests/data/fuzz-grown && cargo +nightly fuzz run --fuzz-dir tests/fuzz $TARGET tests/fuzz/corpus/$TARGET tests/fuzz/seeds tests/data/fuzz-grown -- -max_total_time=$MAX_TOTAL_TIME -timeout=60 -rss_limit_mb=2048 -malloc_limit_mb=512'
+          docker cp corpus fuzz:/src/tests/fuzz/
+          docker start -a fuzz
+      - if: failure()
+        run: docker cp fuzz:/src/tests/fuzz/artifacts/${{ matrix.target }} ./crashers
+      - if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: crashers-${{ matrix.target }}
+          path: crashers
+      - if: always()
+        run: docker cp fuzz:/src/tests/fuzz/corpus/${{ matrix.target }}/. corpus/${{ matrix.target }}/ || true
+      - if: always()
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: corpus
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
+      - if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: corpus-${{ matrix.target }}
+          path: corpus/${{ matrix.target }}
+          retention-days: 14
+          if-no-files-found: ignore
