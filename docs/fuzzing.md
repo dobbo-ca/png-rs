@@ -34,4 +34,4 @@ qemu-user) and runs it under qemu-user, so the NEON unfilter kernels are fuzzed 
 other targets run on x86_64 only; the NEON code is not reached by them.
 
 `.github/workflows/fuzz.yml` runs on a weekly schedule (Wednesday 12:23 UTC) and on `workflow_dispatch`, never on push
-or pull request. Fuzz hours so far: TBD from CI.
+or pull request. Fuzz hours so far: 1.75 (fuzz.yml run 44498624614 on main 3466cdf: 7 jobs x 900 s, the six targets on x86_64 plus unfilter_simd on arm64; 0 crashes).

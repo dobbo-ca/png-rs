@@ -7,7 +7,7 @@ PNG reader (itself a port of Go 1.27 `image/png`), so errors and output match it
 profile follows libpng's lenient defaults. Pure Rust, no C dependency; the only `unsafe` is the
 SIMD filter dispatch and its load/store helpers. Apache-2.0; see `NOTICE`.
 
-Dependency: `png = { git = "https://github.com/dobbo-ca/png-rs", rev = "d976dcb46ec386ed162a90ac358dd35c4dd0e2e8" }`
+Dependency: `png = { git = "https://github.com/dobbo-ca/png-rs", rev = "3466cdf471854192bbdf530e8f71455394468534" }`
 
 ## Quick start
 
