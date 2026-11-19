@@ -42,7 +42,7 @@ impl Ledger {
         let max = self.max.load(Ordering::Relaxed);
         let r = self
             .used
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |u| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |u| {
                 u.checked_add(n).filter(|&t| t <= max)
             });
         match r {

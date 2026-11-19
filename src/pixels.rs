@@ -401,6 +401,7 @@ mod tests {
     #[test]
     fn adam7_pass_sizes() {
         // (width, height) -> (w, h) of the 7 passes; 0 means no pixels.
+        #[allow(clippy::type_complexity)]
         let table: &[(u32, u32, [(usize, usize); 7])] = &[
             (
                 1,

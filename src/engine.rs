@@ -534,10 +534,7 @@ fn idat_run(data: &[u8], start: usize, first: usize) -> Option<(usize, usize)> {
     if end > data.len() {
         return None;
     }
-    loop {
-        let Some(h) = data.get(end..end.checked_add(8)?) else {
-            break;
-        };
+    while let Some(h) = data.get(end..end.checked_add(8)?) {
         if h.get(4..8) != Some(b"IDAT".as_slice()) {
             break;
         }

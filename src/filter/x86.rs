@@ -91,13 +91,10 @@ fn avg<const B: usize>(cur: &mut [u8], prev: &[u8]) {
     let ones = _mm_set1_epi8(1);
     let mut left = _mm_setzero_si128();
     let mut i = 0;
-    loop {
-        let (Some(x), Some(u)) = (
-            cur.get(i..).and_then(|s| s.first_chunk::<4>()),
-            prev.get(i..).and_then(|s| s.first_chunk::<4>()),
-        ) else {
-            break;
-        };
+    while let (Some(x), Some(u)) = (
+        cur.get(i..).and_then(|s| s.first_chunk::<4>()),
+        prev.get(i..).and_then(|s| s.first_chunk::<4>()),
+    ) {
         let (xv, uv) = (ld4(x), ld4(u));
         // floor((left + up) / 2): the rounding-up average minus the carry bit.
         let avg = _mm_sub_epi8(
@@ -124,13 +121,10 @@ fn paeth<const B: usize>(cur: &mut [u8], prev: &[u8]) {
     let ff = _mm_set1_epi16(0xff);
     let (mut aw, mut cw) = (zero, zero);
     let mut i = 0;
-    loop {
-        let (Some(x), Some(p)) = (
-            cur.get(i..).and_then(|s| s.first_chunk::<4>()),
-            prev.get(i..).and_then(|s| s.first_chunk::<4>()),
-        ) else {
-            break;
-        };
+    while let (Some(x), Some(p)) = (
+        cur.get(i..).and_then(|s| s.first_chunk::<4>()),
+        prev.get(i..).and_then(|s| s.first_chunk::<4>()),
+    ) {
         let xw = _mm_unpacklo_epi8(ld4(x), zero);
         let bw = _mm_unpacklo_epi8(ld4(p), zero);
         let pa_s = _mm_sub_epi16(bw, cw);

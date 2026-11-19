@@ -91,13 +91,10 @@ fn sub<const B: usize>(cur: &mut [u8]) {
 fn avg<const B: usize>(cur: &mut [u8], prev: &[u8]) {
     let mut left = vdup_n_u8(0);
     let mut i = 0;
-    loop {
-        let (Some(x), Some(u)) = (
-            cur.get(i..).and_then(|s| s.first_chunk::<4>()),
-            prev.get(i..).and_then(|s| s.first_chunk::<4>()),
-        ) else {
-            break;
-        };
+    while let (Some(x), Some(u)) = (
+        cur.get(i..).and_then(|s| s.first_chunk::<4>()),
+        prev.get(i..).and_then(|s| s.first_chunk::<4>()),
+    ) {
         let (xv, uv) = (ld4(x), ld4(u));
         left = vadd_u8(xv, vhadd_u8(left, uv)); // vhadd: floor((a + b) / 2)
         st::<B>(cur, i, left);
@@ -117,13 +114,10 @@ fn paeth<const B: usize>(cur: &mut [u8], prev: &[u8]) {
     let zero = vdupq_n_s16(0);
     let (mut aw, mut cw) = (zero, zero);
     let mut i = 0;
-    loop {
-        let (Some(x), Some(p)) = (
-            cur.get(i..).and_then(|s| s.first_chunk::<4>()),
-            prev.get(i..).and_then(|s| s.first_chunk::<4>()),
-        ) else {
-            break;
-        };
+    while let (Some(x), Some(p)) = (
+        cur.get(i..).and_then(|s| s.first_chunk::<4>()),
+        prev.get(i..).and_then(|s| s.first_chunk::<4>()),
+    ) {
         let xw = widen(ld4(x));
         let bw = widen(ld4(p));
         let pa = vabdq_s16(bw, cw);
