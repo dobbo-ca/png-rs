@@ -1,0 +1,10 @@
+[package]
+name = "byblos-oracle"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+byblos = { git = "https://github.com/dobbo-ca/byblos-rs", rev = "7131963a975b85b76710f61f638de9d8c7834f85" }

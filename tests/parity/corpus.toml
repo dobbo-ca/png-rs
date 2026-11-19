@@ -1,0 +1,22 @@
+# The public PNG sets of the parity gates (docs/design.md, "Oracles and parity"). fetch.sh downloads
+# each [[file]] once into the BuildKit cache mount id=png-rs-data, checks size and sha256, and
+# extracts the .png files under `extract` (space separated subpaths of the archive's top directory)
+# into <dir>/x/<name>/. `name` is the top directory of the archive.
+
+[[file]]
+name = "libpng-1.6.44"
+path = "libpng-1.6.44.tar.gz"
+url = "https://github.com/pnggroup/libpng/archive/refs/tags/v1.6.44.tar.gz"
+size = 1558044
+sha256 = "0ef5b633d0c65f780c4fced27ff832998e71478c13b45dfb6e94f23a82f64f7c"
+license = "libpng-2.0"
+extract = "contrib/pngsuite contrib/testpngs"
+
+[[file]]
+name = "image-png-0.17.16"
+path = "image-png-0.17.16.tar.gz"
+url = "https://github.com/image-rs/image-png/archive/refs/tags/v0.17.16.tar.gz"
+size = 11234617
+sha256 = "3ee432b21f90a4940c5138e612ff6748e4a9d010d0eac87a667f346a7d54fbc9"
+license = "MIT OR Apache-2.0"
+extract = "tests"

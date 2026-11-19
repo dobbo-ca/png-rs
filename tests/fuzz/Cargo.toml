@@ -1,0 +1,57 @@
+[package]
+name = "png-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+png = { path = "../.." }
+
+# Not part of the root package: only this crate may depend on libfuzzer-sys.
+[workspace]
+
+[[bin]]
+name = "decode"
+path = "fuzz_targets/decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "rows"
+path = "fuzz_targets/rows.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "decoder_reuse"
+path = "fuzz_targets/decoder_reuse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "read_info"
+path = "fuzz_targets/read_info.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "unfilter_simd"
+path = "fuzz_targets/unfilter_simd.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "threads"
+path = "fuzz_targets/threads.rs"
+test = false
+doc = false
+bench = false
