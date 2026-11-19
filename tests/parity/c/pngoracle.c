@@ -200,6 +200,16 @@ static int decode(struct ctx *c, const uint8_t *data, size_t size, int eight, in
         for (size_t y = 0; y < h; y++)
             png_read_row(c->png, c->pix + y * rb, NULL);
     png_read_end(c->png, c->end);
+    if (!c->eight) {
+        /* The unused low bits of the last byte of a sub-byte row are unspecified: zero them
+         * (png-rs Format::Native defines them as zero). */
+        size_t w = png_get_image_width(c->png, c->info);
+        unsigned depth = png_get_bit_depth(c->png, c->info);
+        unsigned rem = (unsigned)((w * depth) % 8);
+        if (depth < 8 && rem != 0)
+            for (size_t y = 0; y < h; y++)
+                c->pix[y * rb + rb - 1] &= (uint8_t)(0xff << (8 - rem));
+    }
     if (c->want_meta)
         build_meta(c);
     png_destroy_read_struct(&c->png, &c->info, &c->end);

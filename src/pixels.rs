@@ -338,7 +338,17 @@ pub(crate) fn to_eight(c: &Conv, raw: &[u8], n: usize, dst: &mut [u8]) {
 /// Writes the `n` pixels of the stored row `raw` to the output row `dst`.
 pub(crate) fn convert_flat(c: &Conv, raw: &[u8], n: usize, rb: usize, dst: &mut [u8]) {
     match c.fmt {
-        Format::Native => copy_n(dst, raw, rb),
+        Format::Native => {
+            copy_n(dst, raw, rb);
+            // The unused low bits of the last byte of a sub-byte row are zero in the output.
+            let rem = n * c.depth % 8;
+            if c.depth < 8
+                && rem != 0
+                && let Some(last) = rb.checked_sub(1).and_then(|i| dst.get_mut(i))
+            {
+                *last &= 0xffu8 << (8 - rem);
+            }
+        }
         Format::Eight => to_eight(c, raw, n, dst),
     }
 }

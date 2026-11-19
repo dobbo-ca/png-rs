@@ -528,7 +528,11 @@ fn libpng_profile_differences() {
         run(&data, Format::Native, Profile::Go).unwrap_err(),
         Error::Trailing(deflate::Error::Checksum)
     );
-    assert_eq!(run(&data, Format::Native, Profile::Libpng).unwrap().1, [7]);
+    // libpng sees the trailer in the call of the last row: an error (see libpng_zlib_tail).
+    assert_eq!(
+        run(&data, Format::Native, Profile::Libpng).unwrap_err(),
+        Error::Trailing(deflate::Error::Checksum)
+    );
 
     // A palette longer than the bit depth allows: Go fails, libpng cuts it off.
     let data = build(&[
@@ -727,4 +731,75 @@ fn errors_display_go_text() {
         "png: invalid format: unexpected EOF"
     );
     assert_eq!(Error::UnexpectedEof.to_string(), "unexpected EOF");
+}
+
+#[test]
+fn native_padding_bits_are_zero() {
+    // 1-bit gray, width 3: the five unused bits of the row byte are set in the file.
+    for (il, raw) in [(0, vec![0, 0xff]), (1, vec![0, 0xff, 0, 0xff, 0, 0xff])] {
+        let data = simple(3, 1, 1, 0, il, &raw);
+        for p in BOTH {
+            assert_eq!(run(&data, Format::Native, p).unwrap().1, [0xe0], "{p:?}");
+        }
+    }
+    // 4-bit, width 3: the low nibble of the second byte.
+    let data = simple(3, 1, 4, 0, 0, &[0, 0x12, 0x3f]);
+    assert_eq!(
+        run(&data, Format::Native, Profile::Go).unwrap().1,
+        [0x12, 0x30]
+    );
+}
+
+/// IHDR (1x1 gray), the `parts` as IDAT chunks, IEND.
+fn idat_parts(parts: &[&[u8]]) -> Vec<u8> {
+    let mut v = vec![(b"IHDR", ihdr(1, 1, 8, 0, 0))];
+    v.extend(parts.iter().map(|p| (b"IDAT", p.to_vec())));
+    v.push((b"IEND", vec![]));
+    build(&v)
+}
+
+fn flip_last(mut z: Vec<u8>) -> Vec<u8> {
+    if let Some(b) = z.last_mut() {
+        *b ^= 1;
+    }
+    z
+}
+
+#[test]
+fn libpng_zlib_tail() {
+    let lp = |d: &[u8]| run(d, Format::Native, Profile::Libpng);
+    let go = |d: &[u8]| run(d, Format::Native, Profile::Go);
+    // The stream is 13 bytes: header 2, stored block header 5, pixels 2, Adler-32 4.
+    let z = zlib(&[0, 7]);
+    let bad = flip_last(z.clone());
+
+    // A good stream split in two chunks.
+    assert_eq!(lp(&idat_parts(&[&z[..9], &z[9..]])).unwrap().1, [7]);
+
+    // A bad Adler-32 that arrives with the end of the data is an error; one that arrives in
+    // the next chunk (another zlib input piece) is a warning.
+    assert_eq!(
+        lp(&idat_parts(&[&bad])).unwrap_err(),
+        Error::Trailing(deflate::Error::Checksum)
+    );
+    assert_eq!(lp(&idat_parts(&[&bad[..9], &bad[9..]])).unwrap().1, [7]);
+    assert!(go(&idat_parts(&[&bad[..9], &bad[9..]])).is_err());
+
+    // A missing trailer is an error: libpng wants more IDAT data and finds IEND.
+    assert!(lp(&idat_parts(&[&z[..9]])).is_err());
+    assert!(lp(&idat_parts(&[&z[..11]])).is_err());
+
+    // Corrupt data after the last row, in the input libpng's last row call has: an error.
+    // A stored block (not the last) with the pixels, then a final block of the invalid type 3.
+    let corrupt = [0x78, 0x01, 0, 2, 0, 0xfd, 0xff, 0, 7, 0x07];
+    assert!(lp(&idat_parts(&[&corrupt])).is_err());
+
+    // Extra pixel data ends that call early: a bad Adler-32 or corrupt data after it is a
+    // warning, as is the extra data itself.
+    let more = zlib(&[0, 7, 9]);
+    assert!(go(&idat_parts(&[&more])).is_err());
+    assert_eq!(lp(&idat_parts(&[&more])).unwrap().1, [7]);
+    assert_eq!(lp(&idat_parts(&[&flip_last(more.clone())])).unwrap().1, [7]);
+    let corrupt = [0x78, 0x01, 0, 3, 0, 0xfc, 0xff, 0, 7, 9, 0x07];
+    assert_eq!(lp(&idat_parts(&[&corrupt])).unwrap().1, [7]);
 }

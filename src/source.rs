@@ -60,10 +60,13 @@ pub(crate) struct Pos {
     idat_length: Cell<u32>,
     /// The CRC of the current IDAT chunk was read and checked.
     crc_done: Cell<bool>,
+    /// IDAT data bytes the zlib reader has taken so far (the zlib header included).
+    used: Cell<usize>,
 }
 
 impl Pos {
     pub(crate) fn reset(&self) {
+        self.used.set(0);
         self.pos.set(0);
         self.crc.set(0);
         self.idat_length.set(0);
@@ -93,6 +96,15 @@ impl<'a> Stream<'a> {
 
     pub(crate) fn set_pos(&self, pos: usize) {
         self.p.pos.set(pos);
+    }
+
+    /// IDAT data bytes the zlib reader has taken so far.
+    pub(crate) fn used(&self) -> usize {
+        self.p.used.get()
+    }
+
+    fn add_used(&self, n: usize) {
+        self.p.used.set(self.p.used.get().saturating_add(n));
     }
 
     pub(crate) fn idat_length(&self) -> u32 {
@@ -254,7 +266,9 @@ impl Read for Idat<'_> {
             }
             if p.len() >= BUF {
                 // A large read with an empty buffer goes straight to the source.
-                return self.s.idat_read(p).map_err(to_io);
+                let n = self.s.idat_read(p).map_err(to_io)?;
+                self.s.add_used(n);
+                return Ok(n);
             }
             self.r = 0;
             self.w = 0;
@@ -269,6 +283,7 @@ impl Read for Idat<'_> {
             dst.copy_from_slice(src);
         }
         self.r += n;
+        self.s.add_used(n);
         Ok(n)
     }
 }
@@ -289,7 +304,9 @@ impl BufRead for Idat<'_> {
     }
 
     fn consume(&mut self, amt: usize) {
-        self.r = self.r.saturating_add(amt).min(self.w);
+        let r = self.r.saturating_add(amt).min(self.w);
+        self.s.add_used(r.saturating_sub(self.r));
+        self.r = r;
     }
 }
 

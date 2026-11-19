@@ -75,9 +75,9 @@ fn token(e: &Error) -> String {
         Error::Image(s) => {
             if s == "png: invalid format: not a PNG file" {
                 "notpng".into()
-            } else if s.contains("invalid checksum") {
+            } else if s == "png: invalid format: invalid checksum" {
                 "checksum".into()
-            } else if s.contains("chunk out of order") {
+            } else if s == "png: invalid format: chunk out of order" {
                 "chunk-order".into()
             } else if s.starts_with("png: invalid format") {
                 "format".into()

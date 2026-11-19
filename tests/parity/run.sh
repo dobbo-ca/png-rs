@@ -31,6 +31,25 @@ gather() {
 
 count() { find "$1" -type f -name "$2" | wc -l; }
 
+# kind <dir> <name>: the .err token of <name> in <dir>, "eight" if it decoded, else "none".
+kind() {
+  if [ -f "$1/$2.err" ]; then cat "$1/$2.err"
+  elif [ -f "$1/$2.eight" ]; then echo eight
+  else echo none; fi
+}
+
+# pairs <dirA> <labelA> <dirB> <labelB> [split]: one line "<name>: <labelA>=<token> <labelB>=<token>" for
+# every name whose .err token differs (or is .err on one side and .eight on the other). With
+# `split` only the ok/err split counts (libpng writes `error` as its token).
+pairs() {
+  { (cd "$1" && ls | sed -n "s/\\.err\$//p"); (cd "$3" && ls | sed -n "s/\\.err\$//p"); } | sort -u |
+  while IFS= read -r n; do
+    a=$(kind "$1" "$n"); b=$(kind "$3" "$n")
+    if [ -n "${5:-}" ]; then [ "$a" = eight ] && x=eight || x=err; [ "$b" = eight ] && y=eight || y=err; [ $x = $y ] && continue; fi
+    [ "$a" = "$b" ] || echo "$n: $2=$a $4=$b"
+  done
+}
+
 # gate <label> <diff-file>: an empty diff passes.
 gate() {
   lines=$(wc -l < "$2")
@@ -68,8 +87,11 @@ full() {
   (cd $W/lp1 && ls | sed -n 's/\.err$//p' | sort) > $W/lp.errs
   diff $W/c.errs $W/lp.errs > $W/d-libpng
   diff -rq -x '*.err' $W/c $W/lp1 >> $W/d-libpng
+  pairs $W/c libpng $W/lp1 png split > $W/p-libpng
   # byblos writes .eight and .err (with tokens) only.
   diff -rq -x '*.native' -x '*.meta' $W/byb $W/go1 > $W/d-byblos
+  pairs $W/byb byblos $W/go1 png > $W/p-byblos
+  for d in libpng byblos; do { cat $W/p-$d; cat $W/d-$d; } > $W/d.t && mv $W/d.t $W/d-$d; done
   diff -rq $W/lp1 $W/lpn > $W/d-lp-threads
   diff -rq $W/go1 $W/gon > $W/d-go-threads
 
@@ -90,6 +112,9 @@ full() {
   gate "byblos vs png-rs --profile go" $W/d-byblos
   gate "libpng profile, 1 thread vs default threads" $W/d-lp-threads
   gate "go profile, 1 thread vs default threads" $W/d-go-threads
+  for d in libpng byblos; do
+    [ -s $W/p-$d ] && { echo; echo "token pairs, $d vs png-rs (first 50):"; echo; head -n 50 $W/p-$d | sed "s/^/    /"; } >> "$REP/summary.md"
+  done
   for d in d-libpng d-byblos d-lp-threads d-go-threads; do [ -f $W/$d ] && cp $W/$d "$REP/$d.diff"; done
   rm -rf $W
   return $bad

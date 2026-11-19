@@ -10,8 +10,9 @@ pub enum Profile {
     Go,
     /// libpng 1.6 defaults (the lenient option): a bad CRC in an ancillary chunk drops the
     /// chunk, a bad CRC in a critical chunk is an error; an unknown critical chunk is an error;
-    /// extra compressed data, a bad Adler-32 or a short zlib tail after the last row are
-    /// ignored; invalid ancillary chunks are dropped as libpng does.
+    /// extra compressed data after the last row is ignored; a bad Adler-32, corrupt data or a
+    /// short zlib tail after the last row is an error or ignored as libpng 1.6.44 does (see
+    /// docs/profiles.md); invalid ancillary chunks are dropped as libpng does.
     Libpng,
 }
 
@@ -102,7 +103,8 @@ impl Default for Header {
 pub enum Format {
     /// Rows as stored after unfiltering and Adam7 merge: samples at bit_depth, sub-byte
     /// samples packed MSB first with each row padded to a byte, 16-bit big-endian, palette
-    /// indices as stored. libpng with no transforms.
+    /// indices as stored. The unused low bits of the last byte of a sub-byte row (PNG leaves
+    /// them unspecified) are zero, also after the Adam7 merge. libpng with no transforms.
     Native,
     /// One byte per sample: 1/2/4-bit gray scaled to 0..255 (v * 255 / (2^d - 1)), 16-bit
     /// reduced to the high byte, palette expanded to RGB (RGBA if tRNS is present; entries

@@ -109,6 +109,8 @@ pub(crate) struct Eng<'d> {
     bpp: usize,
     z_budget: usize,
     z_held: Option<Held<'d>>,
+    /// Where the IDAT data starts in the input and how long the first chunk is.
+    idat0: (usize, usize),
 }
 
 impl<'d> Eng<'d> {
@@ -146,6 +148,7 @@ impl<'d> Eng<'d> {
             bpp: 1,
             z_budget: 0,
             z_held: None,
+            idat0: (0, 0),
         })
     }
 
@@ -198,6 +201,10 @@ impl<'d> Eng<'d> {
             max_alloc: self.z_budget,
         };
         let buf = std::mem::take(&mut self.sc.zbuf);
+        self.idat0 = (
+            self.s.pos(),
+            usize::try_from(self.s.idat_length()).unwrap_or(0),
+        );
         Reader::with_buffer(Idat::new(self.s), buf, &dl, self.cancel)
             .map_err(|e| init_error(classify_flate(e)))
     }
@@ -272,12 +279,25 @@ impl<'d> Eng<'d> {
     /// After the last row: the zlib trailer and the end of the IDAT data.
     ///
     /// Go profile: an error here is Go's `FormatError`, and so is data left over ("too much
-    /// pixel data"). Libpng profile: extra data and any damage of the zlib tail are ignored; the
-    /// rest of the IDAT chunk is skipped, its CRC checked.
+    /// pixel data"). Libpng profile: see docs/profiles.md, "The zlib tail". Extra data is
+    /// ignored; damage is an error only where libpng 1.6.44 makes it one; the rest of the IDAT
+    /// chunk is skipped, its CRC checked.
     pub(crate) fn finish_idat(&mut self, mut z: Zr<'d>) -> Result<(), Error> {
+        // Libpng: its last row call stops at the end of the input piece holding this byte.
+        let last = self.s.used().saturating_sub(1);
         // Check for EOF, to verify the zlib checksum.
         let mut one = [0u8; 1];
-        let r = z.read(&mut one);
+        let mut r = z.read(&mut one);
+        // Libpng goes on reading (and discarding) until the stream ends or fails.
+        let mut extra = false;
+        if self.prof == Profile::Libpng {
+            let mut sink = [0u8; 512];
+            while matches!(r, Ok(n) if n != 0) {
+                check_cancel(self.cancel)?;
+                extra = true;
+                r = z.read(&mut sink);
+            }
+        }
         self.sc.zbuf = z.into_buffer();
         match self.prof {
             Profile::Go => {
@@ -299,9 +319,16 @@ impl<'d> Eng<'d> {
                             if let Some(r) = crate::error::resource(&f) {
                                 return Err(r);
                             }
+                            // Damage libpng's last row call sees is an error, later damage a
+                            // warning. Data after the last row ends that call early.
+                            let at = self.s.used().saturating_sub(1);
+                            if !extra && self.same_piece(last, at) {
+                                return Err(trailing_error(ReadErr::Flate(f)));
+                            }
                         }
                         ReadErr::Src(Src::Checksum) => return Err(Error::Checksum),
-                        _ => {}
+                        // libpng needs more IDAT data and finds none.
+                        e @ (ReadErr::Eof | ReadErr::Src(_)) => return Err(trailing_error(e)),
                     }
                 }
                 if !self.s.crc_done() {
@@ -313,6 +340,16 @@ impl<'d> Eng<'d> {
         }
         self.s.end_idat();
         Ok(())
+    }
+
+    /// Whether bytes `a` and `b` of the IDAT data are in the same piece libpng feeds to zlib.
+    fn same_piece(&self, a: usize, b: usize) -> bool {
+        let (start, first) = self.idat0;
+        let data = self.s.data();
+        matches!(
+            (piece_of(data, start, first, a), piece_of(data, start, first, b)),
+            (Some(x), Some(y)) if x == y
+        )
     }
 
     /// The chunks after the IDAT data, up to IEND.
@@ -473,6 +510,31 @@ impl<'d> Eng<'d> {
         }
         Ok(true)
     }
+}
+
+/// libpng's `PNG_IDAT_READ_SIZE`: the most IDAT bytes it gives zlib at once (never across chunks).
+const IDAT_READ: usize = 8192;
+
+/// The piece libpng gives zlib that holds byte `off` of the IDAT data (the first chunk's data
+/// starts at `start` and has `first` bytes): the chunk number and the piece number in it. `None`
+/// past the data or if a chunk is cut off.
+fn piece_of(data: &[u8], start: usize, first: usize, off: usize) -> Option<(usize, usize)> {
+    let (mut at, mut len, mut base) = (start, first, 0usize);
+    for chunk in 0usize.. {
+        let end = base.checked_add(len)?;
+        if off < end {
+            return Some((chunk, off.saturating_sub(base) / IDAT_READ));
+        }
+        base = end;
+        let next = at.checked_add(len)?.checked_add(4)?;
+        let h = data.get(next..next.checked_add(8)?)?;
+        if h.get(4..8) != Some(b"IDAT".as_slice()) {
+            return None;
+        }
+        len = usize::try_from(be32(h, 0)).ok()?;
+        at = next + 8;
+    }
+    None
 }
 
 fn height_of(hdr: &Header) -> Option<usize> {
