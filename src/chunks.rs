@@ -51,13 +51,12 @@ impl Eng<'_> {
     fn set_palette(&mut self, t: &[u8]) -> Result<(), Error> {
         let n = t.len() / 3;
         self.info.palette.clear();
-        if n > self.info.palette.capacity() {
-            self.ledger.reserve(n * 3)?;
-            self.info
-                .palette
-                .try_reserve_exact(n)
-                .map_err(|_| Error::OutOfMemory)?;
-        }
+        // Booked every call, kept capacity or not, so a reused decoder charges as a fresh one.
+        self.ledger.reserve(n * 3)?;
+        self.info
+            .palette
+            .try_reserve_exact(n)
+            .map_err(|_| Error::OutOfMemory)?;
         self.info
             .palette
             .extend(t.as_chunks::<3>().0.iter().copied());
@@ -144,7 +143,7 @@ impl Eng<'_> {
             _ => {}
         }
         if length > 0x7fff_ffff {
-            return Err(Error::Format("Bad chunk length"));
+            return Err(Error::BadChunkLength(length));
         }
         // Ignore this chunk (of a known length), keep what the metadata of Info wants.
         let data = self.s.chunk_data(length as usize)?;
@@ -182,7 +181,10 @@ impl Eng<'_> {
         let depth = at(t, 8);
         let Some(color_type) = ColorType::from_u8(at(t, 9)).filter(|c| c.allows_depth(depth))
         else {
-            return Err(Error::Unsupported("bit depth and color type"));
+            return Err(Error::UnsupportedDepthColor {
+                bit_depth: depth,
+                color_type: at(t, 9),
+            });
         };
         self.info.header = Header {
             width: w as u32,
@@ -463,8 +465,14 @@ impl Eng<'_> {
             b"iCCP" if early && self.info.iccp.is_none() => self.iccp(data)?,
             b"eXIf" if self.info.exif.is_none() && data.len() >= 2 => {
                 if self.meta_charge(data.len())? {
-                    let v = self.keep(data)?;
-                    self.info.exif = Some(v);
+                    match self.keep(data) {
+                        Ok(v) => self.info.exif = Some(v),
+                        Err(e) => {
+                            self.ledger.release(data.len());
+                            self.meta_used = self.meta_used.saturating_sub(data.len());
+                            return Err(e);
+                        }
+                    }
                 }
             }
             b"tEXt" => self.text(TextKind::Text, data)?,
@@ -519,10 +527,10 @@ impl Eng<'_> {
             self.ledger.release(booked);
             return Ok(());
         }
-        let kept_name = self
-            .ledger
+        let ledger = self.ledger;
+        let kept_name = ledger
             .reserve(name.len())
-            .and_then(|()| self.keep(name));
+            .and_then(|()| self.keep(name).inspect_err(|_| ledger.release(name.len())));
         match kept_name {
             Ok(name) => {
                 self.meta_used += name.len() + profile.len();
@@ -561,21 +569,50 @@ impl Eng<'_> {
                 Err(Inf::Fatal(e)) => return Err(e),
             }
         }
+        // The `Vec<Text>` doubling is booked from the per-call slot count, not from the kept
+        // capacity, before the chunk is charged: a chunk that fails after that gives it all back.
+        let add = if self.info.text.len() == self.text_slots {
+            self.text_slots.max(4)
+        } else {
+            0
+        };
+        let grow = add
+            .checked_mul(std::mem::size_of::<Text>())
+            .ok_or(Error::AllocLimit)?;
+        self.ledger.reserve(grow)?;
+        match self.push_text(kind, data, cost, add) {
+            Ok(true) => Ok(()),
+            r => {
+                self.ledger.release(grow);
+                r.map(|_| ())
+            }
+        }
+    }
+
+    /// Charges `cost`, copies `data` and pushes it; `Ok(false)` if over `max_metadata`. On an
+    /// error or `Ok(false)` nothing stays charged for the chunk itself.
+    fn push_text(
+        &mut self,
+        kind: TextKind,
+        data: &[u8],
+        cost: usize,
+        add: usize,
+    ) -> Result<bool, Error> {
         if !self.meta_charge(cost)? {
-            return Ok(());
+            return Ok(false);
         }
-        let v = self.keep(data)?;
-        let t = &mut self.info.text;
-        if t.len() == t.capacity() {
-            // Doubles, booked before it is allocated.
-            let add = t.capacity().max(4);
-            let bytes = add
-                .checked_mul(std::mem::size_of::<Text>())
-                .ok_or(Error::AllocLimit)?;
-            self.ledger.reserve(bytes)?;
+        let pushed = self.keep(data).and_then(|v| {
+            let t = &mut self.info.text;
             t.try_reserve_exact(add).map_err(|_| Error::OutOfMemory)?;
+            t.push(Text { kind, data: v });
+            Ok(())
+        });
+        if let Err(e) = pushed {
+            self.ledger.release(cost);
+            self.meta_used -= cost;
+            return Err(e);
         }
-        t.push(Text { kind, data: v });
-        Ok(())
+        self.text_slots += add;
+        Ok(true)
     }
 }

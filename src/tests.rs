@@ -364,19 +364,31 @@ fn header_validation_go() {
         ),
         (
             ihdr_raw(1, 1, 3, 0, 0, 0, 0),
-            Error::Unsupported("bit depth and color type"),
+            Error::UnsupportedDepthColor {
+                bit_depth: 3,
+                color_type: 0,
+            },
         ),
         (
             ihdr_raw(1, 1, 8, 1, 0, 0, 0),
-            Error::Unsupported("bit depth and color type"),
+            Error::UnsupportedDepthColor {
+                bit_depth: 8,
+                color_type: 1,
+            },
         ),
         (
             ihdr_raw(1, 1, 16, 3, 0, 0, 0),
-            Error::Unsupported("bit depth and color type"),
+            Error::UnsupportedDepthColor {
+                bit_depth: 16,
+                color_type: 3,
+            },
         ),
         (
             ihdr_raw(1, 1, 1, 2, 0, 0, 0),
-            Error::Unsupported("bit depth and color type"),
+            Error::UnsupportedDepthColor {
+                bit_depth: 1,
+                color_type: 2,
+            },
         ),
     ];
     for (body, want) in cases {
@@ -730,6 +742,18 @@ fn errors_display_go_text() {
         "png: invalid format: unexpected EOF"
     );
     assert_eq!(Error::UnexpectedEof.to_string(), "unexpected EOF");
+    assert_eq!(
+        Error::UnsupportedDepthColor {
+            bit_depth: 3,
+            color_type: 0
+        }
+        .to_string(),
+        "png: unsupported feature: bit depth 3, color type 0"
+    );
+    assert_eq!(
+        Error::BadChunkLength(0x8000_0000).to_string(),
+        "png: invalid format: Bad chunk length: 2147483648"
+    );
 }
 
 #[test]
@@ -1088,5 +1112,43 @@ fn the_threaded_path_threshold_is_a_parameter() {
                 assert_eq!(serial, par, "{p:?} {fmt:?}");
             }
         }
+    }
+}
+
+/// A reused `Decoder` keeps the `Info` vectors but charges them as a fresh one does: the same
+/// file twice under a tight `max_alloc` gives what a fresh decoder gives.
+#[test]
+fn reused_decoder_charges_kept_vectors() {
+    let mut c: Vec<(&[u8; 4], Vec<u8>)> =
+        vec![(b"IHDR", ihdr(1, 1, 8, 3, 0)), (b"PLTE", vec![7; 600])];
+    c.extend((0..3000).map(|_| (b"tEXt", b"k\0".to_vec())));
+    c.push((b"IDAT", zlib(&[0, 0])));
+    c.push((b"IEND", vec![]));
+    let data = build(&c);
+    let big = limits();
+    let tight = Limits {
+        max_alloc: 1024 + 100_000,
+        ..limits()
+    };
+    let run = |dec: &mut Decoder, l: &Limits, p| {
+        let mut out = vec![0u8; 16];
+        dec.decode_into(
+            &data,
+            Format::Native,
+            &mut out,
+            &opts(p),
+            l,
+            &AtomicBool::new(false),
+        )
+        .cloned()
+    };
+    for p in BOTH {
+        let fresh_big = run(&mut Decoder::new(), &big, p);
+        let fresh_tight = run(&mut Decoder::new(), &tight, p);
+        assert_ne!(fresh_big, fresh_tight, "{p:?}");
+        let mut dec = Decoder::new();
+        assert_eq!(run(&mut dec, &big, p), fresh_big, "{p:?}");
+        assert_eq!(run(&mut dec, &tight, p), fresh_tight, "{p:?}");
+        assert_eq!(run(&mut dec, &tight, p), fresh_tight, "{p:?}");
     }
 }

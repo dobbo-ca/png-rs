@@ -377,5 +377,8 @@ pub(crate) fn decode_with(
 /// # Errors
 /// As [`Decoder::read_info`].
 pub fn read_info(data: &[u8], opts: &Options, limits: &Limits) -> Result<Info, Error> {
-    Ok(Decoder::new().read_info(data, opts, limits)?.clone())
+    let mut dec = Decoder::new();
+    dec.read_info(data, opts, limits)?;
+    // Moved out, not cloned: a clone would sit next to the booked original.
+    Ok(std::mem::take(&mut dec.info))
 }

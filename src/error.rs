@@ -19,6 +19,11 @@ pub enum Error {
     Format(&'static str),
     /// Go's `UnsupportedError`; the text follows "png: unsupported feature: ".
     Unsupported(&'static str),
+    /// Go profile: an IHDR bit depth and colour type that do not go together (Go's
+    /// "bit depth {d}, color type {c}" `UnsupportedError`).
+    UnsupportedDepthColor { bit_depth: u8, color_type: u8 },
+    /// Go profile: a chunk length over 2^31 - 1 (Go: "Bad chunk length: {n}").
+    BadChunkLength(u32),
     /// The file ends inside a chunk (Go: `io.ErrUnexpectedEOF`).
     UnexpectedEof,
     /// A zlib or DEFLATE error in the pixel rows (stream errors only; limits and cancellation
@@ -53,6 +58,14 @@ impl fmt::Display for Error {
             Self::ChunkOrder => f.write_str("png: invalid format: chunk out of order"),
             Self::Format(s) => write!(f, "png: invalid format: {s}"),
             Self::Unsupported(s) => write!(f, "png: unsupported feature: {s}"),
+            Self::UnsupportedDepthColor {
+                bit_depth,
+                color_type,
+            } => write!(
+                f,
+                "png: unsupported feature: bit depth {bit_depth}, color type {color_type}"
+            ),
+            Self::BadChunkLength(n) => write!(f, "png: invalid format: Bad chunk length: {n}"),
             Self::UnexpectedEof => f.write_str("unexpected EOF"),
             Self::Zlib(e) => write!(f, "{e}"),
             Self::Trailing(e) => write!(f, "png: invalid format: {e}"),
