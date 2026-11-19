@@ -42,9 +42,9 @@ RUN --mount=type=cache,id=png-rs-target-ci,sharing=locked,target=/src/target \
 RUN --mount=type=cache,id=png-rs-target-ci,sharing=locked,target=/src/target \
     find src examples tests -name '*.rs' -exec touch {} + && cargo clippy --locked --all-targets --target aarch64-unknown-linux-gnu -- -D warnings
 RUN --mount=type=cache,id=png-rs-target-ci,sharing=locked,target=/src/target \
-    find src examples tests -name '*.rs' -exec touch {} + && cargo test --locked
+    find src examples tests -name '*.rs' -exec touch {} + && cargo test --locked --no-fail-fast
 RUN --mount=type=cache,id=png-rs-target-ci,sharing=locked,target=/src/target \
-    find src examples tests -name '*.rs' -exec touch {} + && PNG_SIMD=scalar cargo test --locked
+    find src examples tests -name '*.rs' -exec touch {} + && PNG_SIMD=scalar cargo test --locked --no-fail-fast
 # The examples are built too, so the cross linker runs (a lib alone is not linked).
 RUN --mount=type=cache,id=png-rs-target-ci,sharing=locked,target=/src/target \
     find src examples tests -name '*.rs' -exec touch {} + && cargo build --locked --release --target aarch64-unknown-linux-gnu --examples

@@ -4,6 +4,12 @@
 use crate::error::Error;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+/// Booked at the start of every call for the small, short-lived allocations that do not scale
+/// with the input and are not charged one by one (for example the boxed `io::Error` that
+/// deflate-rs makes when the IDAT reader reports a bad chunk). A `max_alloc` below this is
+/// `Error::AllocLimit` at once.
+pub(crate) const SMALL: usize = 1024;
+
 /// Bytes booked against `Limits::max_alloc`.
 #[derive(Debug, Default)]
 pub(crate) struct Ledger {
@@ -13,12 +19,13 @@ pub(crate) struct Ledger {
 }
 
 impl Ledger {
-    /// Starts a call: `max` bytes allowed, `preload` of them already taken by the caller.
+    /// Starts a call: `max` bytes allowed, `preload` of them already taken by the caller, plus
+    /// [`SMALL`] for the small allocations that are not charged one by one.
     pub(crate) fn reset(&self, max: usize, preload: usize) -> Result<(), Error> {
         self.max.store(max as u64, Ordering::Relaxed);
         self.used.store(0, Ordering::Relaxed);
         self.peak.store(0, Ordering::Relaxed);
-        self.reserve(preload)
+        self.reserve(preload.checked_add(SMALL).ok_or(Error::AllocLimit)?)
     }
 
     /// What may still be charged.
@@ -97,21 +104,21 @@ mod tests {
     #[test]
     fn charges_release_and_peak() {
         let l = Ledger::default();
-        l.reset(100, 0).unwrap();
+        l.reset(SMALL + 100, 0).unwrap();
         let a = l.charge(60).unwrap();
         assert_eq!(l.charge(50).unwrap_err(), Error::AllocLimit);
         assert_eq!(l.left(), 40);
         drop(a);
         assert_eq!(l.left(), 100);
         let _b = l.charge(100).unwrap();
-        assert_eq!(l.peak(), 100);
+        assert_eq!(l.peak(), SMALL as u64 + 100);
     }
 
     #[test]
     fn reset_preload_and_zeroed() {
         let l = Ledger::default();
-        assert_eq!(l.reset(10, 11).unwrap_err(), Error::AllocLimit);
-        l.reset(10, 4).unwrap();
+        assert_eq!(l.reset(SMALL + 10, 11).unwrap_err(), Error::AllocLimit);
+        l.reset(SMALL + 10, 4).unwrap();
         assert_eq!(l.left(), 6);
         let mut v = Vec::new();
         assert_eq!(zeroed(&mut v, 7, &l).unwrap_err(), Error::AllocLimit);
@@ -119,7 +126,7 @@ mod tests {
         assert_eq!(v, [0; 6]);
         assert_eq!(l.left(), 0);
         // A new call with the buffer kept: no allocation, same charge.
-        l.reset(10, 4).unwrap();
+        l.reset(SMALL + 10, 4).unwrap();
         let cap = v.capacity();
         zeroed(&mut v, 6, &l).unwrap();
         assert_eq!(v.capacity(), cap);

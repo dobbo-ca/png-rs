@@ -17,7 +17,7 @@
 
 - Width, height and pixel count are checked as soon as IHDR is read, before any buffer is sized
   from them.
-- `max_alloc` is the peak working memory of one call. Every buffer that scales with the input
+- `max_alloc` is the peak working memory of one call. Each call books a fixed 1 KiB first, for the small short-lived allocations that are not charged one by one (such as the boxed `io::Error` deflate-rs makes for a bad IDAT chunk), so a `max_alloc` under 1 KiB is `AllocLimit` at once. Every buffer that scales with the input
   (row buffers, IDAT buffer, output from `decode`, the merged image for interlaced `Rows`,
   metadata vectors) is charged to a ledger before it is allocated, with `try_reserve_exact`, and
   released when it is dropped. The inflate stage gets what is left of the budget as
