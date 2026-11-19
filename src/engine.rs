@@ -22,10 +22,10 @@ use std::io::Read;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 /// What deflate-rs's reader may use besides the output it hands out: its window and one step.
-const ZLIB_RESERVE: usize = 256 << 10;
+pub(crate) const ZLIB_RESERVE: usize = 256 << 10;
 
 /// The threaded path needs at least this much compressed IDAT data.
-const PAR_MIN: usize = 4 << 20;
+pub(crate) const PAR_MIN: usize = 4 << 20;
 
 const PNG_HEADER: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
 
@@ -109,6 +109,10 @@ pub(crate) struct Eng<'d> {
     bpp: usize,
     z_budget: usize,
     z_held: Option<Held<'d>>,
+    /// The threaded path's buffers (`cat`, `filtered`), booked until the call ends.
+    par_held: Option<Held<'d>>,
+    /// The least compressed IDAT data that takes the threaded path.
+    pub(crate) par_min: usize,
     /// Where the IDAT data starts in the input and how long the first chunk is.
     idat0: (usize, usize),
 }
@@ -148,6 +152,8 @@ impl<'d> Eng<'d> {
             bpp: 1,
             z_budget: 0,
             z_held: None,
+            par_held: None,
+            par_min: PAR_MIN,
             idat0: (0, 0),
         })
     }
@@ -378,14 +384,21 @@ impl<'d> Eng<'d> {
         let Some((total, end)) = idat_run(self.s.data(), start, first) else {
             return Ok(false);
         };
+        // A kept buffer bigger than this image needs would hold memory that is not booked.
+        if self.sc.cat.capacity() > total {
+            self.sc.cat = Vec::new();
+        }
+        if self.sc.filtered.capacity() > need {
+            self.sc.filtered = Vec::new();
+        }
         let Some(mem) = total.checked_add(need) else {
             return Ok(false);
         };
-        if total < PAR_MIN || mem > self.ledger.left() {
+        if total < self.par_min || mem > self.ledger.left() {
             return Ok(false);
         }
         let ledger: &'d Ledger = self.ledger;
-        let Ok(_held) = ledger.charge(mem) else {
+        let Ok(held) = ledger.charge(mem) else {
             return Ok(false);
         };
         let mut cat = std::mem::take(&mut self.sc.cat);
@@ -396,6 +409,12 @@ impl<'d> Eng<'d> {
         if matches!(r, Ok(true)) {
             self.s.set_pos(end);
             self.s.end_idat();
+            // The buffers are alive until the call ends: so is their booking.
+            self.par_held = Some(held);
+        } else {
+            // No buffer may outlive its booking: free them before it goes.
+            self.sc.cat = Vec::new();
+            self.sc.filtered = Vec::new();
         }
         r
     }

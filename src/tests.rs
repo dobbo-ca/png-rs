@@ -697,7 +697,7 @@ fn limits_and_cancel() {
         Error::Cancelled
     );
 
-    // max_metadata: the Go profile fails, libpng drops the chunk.
+    // max_metadata: both profiles drop the chunk.
     let text = build(&[
         (b"IHDR", ihdr(1, 1, 8, 0, 0)),
         (b"tEXt", b"Comment\0hello".to_vec()),
@@ -708,12 +708,11 @@ fn limits_and_cancel() {
         max_metadata: 4,
         ..d
     };
-    assert_eq!(
-        decode(&text, Format::Native, &opts(Profile::Go), &l, &cancel).unwrap_err(),
-        Error::MetadataLimit
-    );
-    let (info, _) = decode(&text, Format::Native, &opts(Profile::Libpng), &l, &cancel).unwrap();
-    assert!(info.text.is_empty());
+    for p in BOTH {
+        let (info, out) = decode(&text, Format::Native, &opts(p), &l, &cancel).unwrap();
+        assert!(info.text.is_empty(), "{p:?}");
+        assert_eq!(out, [7]);
+    }
 }
 
 #[test]
@@ -802,4 +801,292 @@ fn libpng_zlib_tail() {
     assert_eq!(lp(&idat_parts(&[&flip_last(more.clone())])).unwrap().1, [7]);
     let corrupt = [0x78, 0x01, 0, 3, 0, 0xfc, 0xff, 0, 7, 9, 0x07];
     assert_eq!(lp(&idat_parts(&[&corrupt])).unwrap().1, [7]);
+}
+
+fn lp(d: &[u8]) -> Result<(Info, Vec<u8>), Error> {
+    run(d, Format::Native, Profile::Libpng)
+}
+
+#[test]
+fn libpng_unknown_chunk_before_ihdr_is_skipped() {
+    let with = |typ: &[u8; 4]| {
+        build(&[
+            (typ, vec![1, 2, 3]),
+            (b"IHDR", ihdr(1, 1, 8, 0, 0)),
+            (b"IDAT", zlib(&[0, 7])),
+            (b"IEND", vec![]),
+        ])
+    };
+    // png_handle_unknown does not look for IHDR; cICP and acTL are unknown to libpng 1.6.44.
+    for t in [b"zzZz", b"cICP", b"acTL"] {
+        let (info, out) = lp(&with(t)).unwrap();
+        assert_eq!(out, [7]);
+        assert!(info.cicp.is_none() && info.apng.is_none());
+    }
+    // The chunks libpng has a handler for fail there; an unknown critical one fails too.
+    for t in [b"tEXt", b"gAMA", b"PLTE", b"tRNS", b"IDAT"] {
+        assert_eq!(lp(&with(t)).unwrap_err(), Error::Format("missing IHDR"));
+    }
+    assert_eq!(
+        lp(&with(b"ABCD")).unwrap_err(),
+        Error::Format("unknown critical chunk")
+    );
+    // The CRC of the skipped chunk is checked: a bad one is dropped, as for any ancillary chunk.
+    let mut d = SIG.to_vec();
+    chunk_with_crc(&mut d, b"zzZz", &[1], 1);
+    chunk_with_crc(&mut d, b"IHDR", &ihdr(1, 1, 8, 0, 0), 0);
+    chunk_with_crc(&mut d, b"IDAT", &zlib(&[0, 7]), 0);
+    chunk_with_crc(&mut d, b"IEND", &[], 0);
+    assert_eq!(lp(&d).unwrap().1, [7]);
+}
+
+#[test]
+fn libpng_plte_rules() {
+    let rgb = |chunks: &[(&[u8; 4], Vec<u8>)]| {
+        let mut v = vec![(b"IHDR", ihdr(1, 1, 8, 2, 0))];
+        v.extend(chunks.iter().cloned());
+        build(&v)
+    };
+    let pixels = (b"IDAT", zlib(&[0, 1, 2, 3]));
+    let end = (b"IEND", vec![]);
+    let plte = (b"PLTE", vec![9, 9, 9]);
+    // A duplicate PLTE is an error, also after IDAT (libpng checks it before the place).
+    let dup = rgb(&[plte.clone(), pixels.clone(), plte.clone(), end.clone()]);
+    assert_eq!(lp(&dup).unwrap_err(), Error::ChunkOrder);
+    // A first PLTE after IDAT is ignored.
+    let late = rgb(&[pixels.clone(), plte.clone(), end.clone()]);
+    assert_eq!(lp(&late).unwrap().1, [1, 2, 3]);
+    // An empty PLTE is "Invalid palette" for every colour type that reads it.
+    let empty = (b"PLTE", Vec::<u8>::new());
+    assert_eq!(
+        lp(&rgb(&[empty.clone(), pixels.clone(), end.clone()])).unwrap_err(),
+        Error::Format("Invalid palette")
+    );
+    let indexed = build(&[
+        (b"IHDR", ihdr(1, 1, 8, 3, 0)),
+        empty.clone(),
+        (b"IDAT", zlib(&[0, 0])),
+        end.clone(),
+    ]);
+    assert_eq!(lp(&indexed).unwrap_err(), Error::Format("Invalid palette"));
+    // A gray image ignores its PLTE, whatever it holds.
+    let gray = build(&[
+        (b"IHDR", ihdr(1, 1, 8, 0, 0)),
+        empty,
+        (b"IDAT", zlib(&[0, 7])),
+        end,
+    ]);
+    assert_eq!(lp(&gray).unwrap().1, [7]);
+}
+
+#[test]
+fn libpng_rgb_trns_before_plte_is_cancelled() {
+    let trns = (b"tRNS", vec![0, 1, 0, 2, 0, 3]);
+    let plte = (b"PLTE", vec![9, 9, 9]);
+    let make = |chunks: &[(&[u8; 4], Vec<u8>)]| {
+        let mut v = vec![(b"IHDR", ihdr(1, 1, 8, 2, 0))];
+        v.extend(chunks.iter().cloned());
+        v.push((b"IDAT", zlib(&[0, 1, 2, 3])));
+        v.push((b"IEND", vec![]));
+        build(&v)
+    };
+    let before = make(&[trns.clone(), plte.clone()]);
+    let after = make(&[plte.clone(), trns.clone()]);
+    // tRNS first: libpng sets num_trans to 0 when the PLTE comes, so no alpha channel; the
+    // chunk is still reported.
+    let (info, eight) = run(&before, Format::Eight, Profile::Libpng).unwrap();
+    assert_eq!(eight, [1, 2, 3]);
+    assert!(info.trns.is_some() && !info.has_trns());
+    assert_eq!(info.output_size(Format::Eight), Some(3));
+    // PLTE first: the key applies (the pixel equals it, so it is transparent).
+    let (info, eight) = run(&after, Format::Eight, Profile::Libpng).unwrap();
+    assert_eq!(eight, [1, 2, 3, 0]);
+    assert!(info.has_trns());
+    // Without a PLTE at all the key applies, and Go cannot see the first case at all.
+    let plain = make(&[trns]);
+    assert_eq!(
+        run(&plain, Format::Eight, Profile::Libpng).unwrap().1,
+        [1, 2, 3, 0]
+    );
+    assert_eq!(
+        run(&before, Format::Eight, Profile::Go).unwrap_err(),
+        Error::ChunkOrder
+    );
+    // The flag does not leak into the next call of a reused decoder.
+    let cancel = AtomicBool::new(false);
+    let mut dec = Decoder::new();
+    let mut out = [0u8; 4];
+    let o = opts(Profile::Libpng);
+    let mut three = [0u8; 3];
+    dec.decode_into(&before, Format::Eight, &mut three, &o, &limits(), &cancel)
+        .unwrap();
+    assert!(
+        dec.decode_into(&plain, Format::Eight, &mut out, &o, &limits(), &cancel)
+            .unwrap()
+            .has_trns()
+    );
+}
+
+/// An iCCP chunk of `name` and a profile of `n` zero bytes (stored zlib blocks).
+fn iccp_zeros(n: usize) -> (&'static [u8; 4], Vec<u8>) {
+    let mut body = b"p\0\0".to_vec();
+    body.extend_from_slice(&zlib(&vec![0u8; n]));
+    (b"iCCP", body)
+}
+
+#[test]
+fn go_profile_never_fails_on_an_ancillary_chunk() {
+    let mut bad_icc = b"icc\0\0".to_vec();
+    bad_icc.extend_from_slice(b"garbage");
+    let data = build(&[
+        (b"IHDR", ihdr(1, 1, 8, 0, 0)),
+        (b"gAMA", vec![1]),
+        (b"zTXt", b"k\0\0not zlib".to_vec()),
+        (b"iCCP", bad_icc),
+        iccp_zeros(64 << 10), // over max_metadata
+        (b"eXIf", vec![1]),
+        (b"tEXt", vec![b'a'; 200]), // over max_metadata
+        (b"IDAT", zlib(&[0, 7])),
+        (b"IEND", vec![]),
+    ]);
+    let l = Limits {
+        max_metadata: 100,
+        ..limits()
+    };
+    let cancel = AtomicBool::new(false);
+    let go = opts(Profile::Go);
+    let info = read_info(&data, &go, &l).unwrap();
+    assert!(info.iccp.is_none() && info.exif.is_none() && info.gamma.is_none());
+    // Go does not look inside zTXt: it is kept raw.
+    assert_eq!(info.text.len(), 1);
+    let (info, out) = decode(&data, Format::Native, &go, &l, &cancel).unwrap();
+    assert_eq!((out.as_slice(), info.text.len()), (&[7u8][..], 1));
+    // The Libpng profile inflates it, finds it bad and drops it.
+    let (info, _) = decode(&data, Format::Native, &opts(Profile::Libpng), &l, &cancel).unwrap();
+    assert!(info.text.is_empty());
+}
+
+#[test]
+fn go_profile_drops_an_iccp_that_does_not_fit_max_alloc() {
+    // The profile inflates to 3 MiB, max_alloc is 1 MiB: the chunk is dropped and the booking
+    // of its steps is given back, so the pixels still decode.
+    let data = build(&[
+        (b"IHDR", ihdr(1, 1, 8, 0, 0)),
+        iccp_zeros(3 << 20),
+        (b"IDAT", zlib(&[0, 7])),
+        (b"IEND", vec![]),
+    ]);
+    let l = Limits {
+        max_alloc: 1 << 20,
+        ..limits()
+    };
+    let (info, out) = decode(
+        &data,
+        Format::Native,
+        &opts(Profile::Go),
+        &l,
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    assert!(info.iccp.is_none());
+    assert_eq!(out, [7]);
+}
+
+#[test]
+fn each_kept_text_chunk_counts_at_least_16_bytes() {
+    let mut v = vec![(b"IHDR", ihdr(1, 1, 8, 0, 0))];
+    v.extend(std::iter::repeat_n((b"tEXt", Vec::<u8>::new()), 5));
+    v.push((b"IDAT", zlib(&[0, 7])));
+    v.push((b"IEND", vec![]));
+    let data = build(&v);
+    let l = Limits {
+        max_metadata: 40,
+        ..limits()
+    };
+    for p in BOTH {
+        let (info, _) =
+            decode(&data, Format::Native, &opts(p), &l, &AtomicBool::new(false)).unwrap();
+        assert_eq!(info.text.len(), 2, "{p:?}");
+    }
+}
+
+#[test]
+fn a_reused_decoder_does_not_charge_a_pooled_iccp_that_a_fresh_one_would_not_hold() {
+    let wrap = |icc: (&'static [u8; 4], Vec<u8>)| {
+        build(&[
+            (b"IHDR", ihdr(1, 1, 8, 0, 0)),
+            icc,
+            (b"IDAT", zlib(&[0, 7])),
+            (b"IEND", vec![]),
+        ])
+    };
+    let (big, small) = (wrap(iccp_zeros(600_000)), wrap(iccp_zeros(200)));
+    let cancel = AtomicBool::new(false);
+    let o = Options::default();
+    let tight = Limits {
+        max_alloc: 400_000,
+        ..limits()
+    };
+    let mut out = [0u8; 1];
+    let fresh = Decoder::new()
+        .decode_into(&small, Format::Native, &mut out, &o, &tight, &cancel)
+        .map(|i| i.iccp.is_some());
+    assert_eq!(fresh, Ok(true));
+    // The first decode leaves a profile vector of about 1 MiB in the pool.
+    let mut dec = Decoder::new();
+    dec.decode_into(&big, Format::Native, &mut out, &o, &limits(), &cancel)
+        .unwrap();
+    let reused = dec
+        .decode_into(&small, Format::Native, &mut out, &o, &tight, &cancel)
+        .map(|i| i.iccp.is_some());
+    assert_eq!(reused, Ok(true));
+}
+
+#[test]
+fn decode_reads_the_cancel_flag_in_its_first_pass() {
+    // The header pass used a flag of its own: a bad file gave its own error, not Cancelled.
+    let stop = AtomicBool::new(true);
+    assert_eq!(
+        decode(
+            b"not a png",
+            Format::Native,
+            &Options::default(),
+            &limits(),
+            &stop
+        )
+        .unwrap_err(),
+        Error::Cancelled
+    );
+}
+
+#[test]
+fn the_threaded_path_threshold_is_a_parameter() {
+    let threaded = Limits {
+        max_threads: 4,
+        ..Limits::default()
+    };
+    let bad_adler = build(&[
+        (b"IHDR", ihdr(1, 1, 8, 0, 0)),
+        (b"IDAT", flip_last(zlib(&[0, 7]))),
+        (b"IEND", vec![]),
+    ]);
+    let good = simple(3, 3, 8, 0, 0, &[0, 10, 20, 30, 2, 1, 1, 1, 1, 5, 1, 1]);
+    for data in [&good, &bad_adler, &adam7_3x3(), &adam7_2bit()] {
+        for p in BOTH {
+            for fmt in [Format::Native, Format::Eight] {
+                let serial = run(data, fmt, p);
+                // Threshold 0: the threaded path is tried on this small input; a fallback or
+                // not, the result is the serial one.
+                let par = crate::decoder::decode_with(
+                    data,
+                    fmt,
+                    &opts(p),
+                    &threaded,
+                    &AtomicBool::new(false),
+                    0,
+                );
+                assert_eq!(serial, par, "{p:?} {fmt:?}");
+            }
+        }
+    }
 }

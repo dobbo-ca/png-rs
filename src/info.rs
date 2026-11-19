@@ -6,6 +6,8 @@ pub enum Profile {
     /// Go 1.27 `image/png` and byblos-rs today (default): every chunk CRC checked, unknown
     /// chunks (critical too) skipped, extra pixel data after the last row is an error, an
     /// error after the last row (bad Adler-32, truncated stream) is an error.
+    /// The contents of ancillary chunks are ignored as Go does: a bad or over-limit one is dropped,
+    /// never an error.
     #[default]
     Go,
     /// libpng 1.6 defaults (the lenient option): a bad CRC in an ancillary chunk drops the
@@ -237,13 +239,17 @@ pub struct Info {
     pub text: Vec<Text>,
     /// acTL seen.
     pub apng: Option<Apng>,
+    /// Libpng profile: a PLTE after a colour-key tRNS of an RGB image cancels the key (libpng
+    /// sets `num_trans` to 0 and keeps the chunk as read), so it adds no alpha channel.
+    pub(crate) trns_cancelled: bool,
 }
 
 impl Info {
-    /// Whether a tRNS chunk was kept.
+    /// Whether a tRNS chunk was kept and applies to the pixels (the Libpng profile cancels the
+    /// key of an RGB image whose PLTE comes after the tRNS; `trns` still holds it).
     #[must_use]
     pub fn has_trns(&self) -> bool {
-        self.trns.is_some()
+        self.trns.is_some() && !self.trns_cancelled
     }
 
     /// Bytes per output row of `fmt`, `None` on overflow.

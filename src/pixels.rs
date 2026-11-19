@@ -157,6 +157,9 @@ impl Conv {
 /// 16 bits. For Gray under 8 bits Go scales the low byte of the chunk (and wraps), libpng masks
 /// the value to the depth first.
 fn key_for(info: &Info, profile: Profile) -> Option<[u16; 3]> {
+    if !info.has_trns() {
+        return None;
+    }
     let depth = info.header.bit_depth;
     match (&info.trns, info.header.color_type) {
         (Some(Trns::Gray(v)), ColorType::Gray) => {

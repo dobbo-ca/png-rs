@@ -146,10 +146,24 @@ RUN rustup toolchain install nightly --profile minimal \
 ENV CARGO_NET_OFFLINE=true
 
 # Seeds are PngSuite and the byblos fixtures, copied from tests/data here, not kept twice in git.
+# Each gets one 0x00 option byte at the end (the targets read their options from the last byte).
 FROM fuzz-tools AS fuzz
 COPY . .
 RUN sh tests/parity/run.sh gather tests/fuzz/seeds tests/data pngsuite byblos \
+    && for f in tests/fuzz/seeds/*; do printf '\0' >> "$f"; done \
     && cargo +nightly fuzz build --fuzz-dir tests/fuzz
+
+# unfilter_simd built for aarch64 (no sanitizer: ASan does not run under qemu-user), run under
+# qemu-aarch64 by fuzz.yml: it fuzzes the NEON unfilter kernels.
+FROM fuzz-tools AS fuzz-arm64-tools
+RUN apt-get update && apt-get install -y --no-install-recommends qemu-user g++-aarch64-linux-gnu \
+    && rm -rf /var/lib/apt/lists/* && rustup target add aarch64-unknown-linux-gnu --toolchain nightly
+ENV CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \
+    CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++
+
+FROM fuzz-arm64-tools AS fuzz-arm64
+COPY . .
+RUN cargo +nightly fuzz build --fuzz-dir tests/fuzz --sanitizer none --target aarch64-unknown-linux-gnu unfilter_simd
 
 # Benchmark (bench.yml): libpng (C oracle, bench mode) and examples/bench on the same corpus, in
 # one container, so the ratio compares the same machine. BENCH_RUN changes per run, so a cache hit

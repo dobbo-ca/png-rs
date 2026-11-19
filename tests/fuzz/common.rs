@@ -1,4 +1,4 @@
-//! Shared by the fuzz targets: small limits, and the options read from the front of the input.
+//! Shared by the fuzz targets: small limits, and the options read from the end of the input.
 #![allow(dead_code)]
 
 use png::{Format, Limits, Options, Profile};
@@ -17,9 +17,10 @@ pub fn limits(max_threads: usize) -> Limits {
     }
 }
 
-/// Byte 0: bit 0 profile, bit 1 format. The rest is the PNG stream.
+/// Last byte: bit 0 profile, bit 1 format. The rest is the PNG stream, so a raw PNG plus one byte
+/// is a valid seed.
 pub fn parse(src: &[u8]) -> Option<(Options, Format, &[u8])> {
-    let (&b, data) = src.split_first()?;
+    let (&b, data) = src.split_last()?;
     let profile = if b & 1 == 0 {
         Profile::Go
     } else {

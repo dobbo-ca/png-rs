@@ -217,7 +217,8 @@ fn limits() {
     );
 
     let text = file("ctzn0g04"); // zTXt
-    let e = png::decode(
+    // Over max_metadata the chunk is dropped; the decode goes on.
+    let (info, _) = png::decode(
         &text,
         Format::Native,
         &o,
@@ -227,8 +228,8 @@ fn limits() {
         },
         &cancel,
     )
-    .unwrap_err();
-    assert_eq!(e, Error::MetadataLimit);
+    .unwrap();
+    assert!(info.text.is_empty());
 
     let mut out = vec![0u8; 10];
     let mut dec = Decoder::new();

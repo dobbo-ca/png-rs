@@ -7,11 +7,11 @@
 | Field | Default | Unit | Error when exceeded |
 |---|---|---|---|
 | `max_alloc` | 1 GiB | bytes | `AllocLimit` |
-| `max_threads` | `available_parallelism()` | threads | none |
+| `max_threads` | `available_parallelism()` | threads | none (0 is treated as 1) |
 | `max_width` | `1 << 24` | pixels | `WidthLimit` |
 | `max_height` | `1 << 24` | pixels | `HeightLimit` |
 | `max_pixels` | `1 << 28` | width x height | `PixelLimit` |
-| `max_metadata` | 16 MiB | bytes | `MetadataLimit` (Go profile) |
+| `max_metadata` | 16 MiB | bytes | none: the chunk is dropped (both profiles) |
 
 ## What is checked, and when
 
@@ -23,11 +23,20 @@
   released when it is dropped. The inflate stage gets what is left of the budget as
   `deflate::Limits::max_alloc`, so the total holds across crates and threads.
 - `max_metadata` counts the ancillary data the decoder keeps: text chunks, eXIf, and the
-  decompressed iCCP profile. PLTE is not counted. Unknown chunks are skipped, not kept. Under the
-  Libpng profile an over-limit chunk is dropped instead of failing the decode.
+  decompressed iCCP profile. PLTE is not counted. Unknown chunks are skipped, not kept. An over-limit
+  chunk is dropped in both profiles, never an error (`Error::MetadataLimit` is not returned
+  today). Every kept text chunk counts at least 16 bytes, so empty chunks are bounded too. The
+  Go profile does not inflate zTXt and iTXt at all (their raw data is kept); iCCP is inflated
+  for `Info`, and a bad or over-limit profile is dropped. A memory limit hit while keeping an
+  ancillary chunk drops it in the Go profile; the Libpng profile returns `AllocLimit`.
+- The iCCP profile is inflated into a vector that grows in steps, each booked before it is
+  allocated, and that stays booked while `Info` holds it. A pooled vector of an earlier call
+  counts too; one that does not fit is freed. A dropped profile is freed and its booking given
+  back. The window of the inflate is booked while it runs.
 - A failed allocation that the ledger allowed returns `OutOfMemory`.
 - `Decoder::decode_into` returns `BufferTooSmall` if `out` is shorter than
-  `info.output_size(fmt)`; this is checked right after the header.
+  `info.output_size(fmt)`; this is checked after the chunks before the image
+  data are read.
 
 ## Cancellation
 

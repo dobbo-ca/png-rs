@@ -1,8 +1,10 @@
 //! Ancillary chunks: validation of the chunk data (as libpng 1.6 validates it), the zlib helper
 //! for iCCP / zTXt / iTXt, and the pool that keeps the `Info` vectors between calls.
 
+use crate::engine::ZLIB_RESERVE;
 use crate::error::{Error, resource};
 use crate::info::{Apng, Cicp, Header, Info, TextKind, Trns};
+use crate::ledger::Ledger;
 use crate::source::be32;
 use std::io::Read;
 use std::sync::atomic::AtomicBool;
@@ -133,40 +135,99 @@ fn inf(e: &deflate::Error) -> Inf {
     }
 }
 
-/// Inflates the whole zlib stream `z`: into `out`, or just checks it when `out` is `None`.
-/// `zbuf` is the reader's window, kept for the next use.
+/// Bytes of the output `Vec` that one `read` call may fill (zeroed first).
+const READ_STEP: usize = 64 << 10;
+
+fn io_inf(e: &std::io::Error) -> Inf {
+    match crate::source::classify(e) {
+        crate::source::ReadErr::Flate(f) => inf(&f),
+        _ => Inf::Bad,
+    }
+}
+
+/// Reads `r` to its end into `out`. The `Vec` grows in steps, each booked in the ledger before
+/// it is allocated; the capacity it holds on entry is booked by the caller.
+fn fill<R: Read>(
+    r: &mut R,
+    out: &mut Vec<u8>,
+    max_output: usize,
+    ledger: &Ledger,
+) -> Result<(), Inf> {
+    loop {
+        let n = out.len();
+        if n == out.capacity() {
+            // One byte more than the cap, so that a stream that passes it is seen.
+            let step = n
+                .clamp(4096, 1 << 20)
+                .min(max_output.saturating_sub(n).saturating_add(1));
+            ledger.reserve(step).map_err(Inf::Fatal)?;
+            out.try_reserve_exact(step)
+                .map_err(|_| Inf::Fatal(Error::OutOfMemory))?;
+        }
+        let end = out.capacity().min(n.saturating_add(READ_STEP));
+        out.resize(end, 0);
+        let got = match out.get_mut(n..) {
+            Some(buf) => r.read(buf),
+            None => Ok(0),
+        };
+        match got {
+            Ok(g) => {
+                out.truncate(n.saturating_add(g).min(end));
+                if g == 0 {
+                    return Ok(());
+                }
+            }
+            Err(e) => {
+                out.truncate(n);
+                return Err(io_inf(&e));
+            }
+        }
+    }
+}
+
+/// Inflates the whole zlib stream `z`: into `out` (grown in booked steps), or just checks it
+/// when `out` is `None`. The reader's window is booked while it runs and freed when it ends;
+/// `zbuf` is left empty.
 pub(crate) fn inflate(
     z: &[u8],
     zbuf: &mut Vec<u8>,
     out: Option<&mut Vec<u8>>,
     max_output: usize,
-    max_alloc: usize,
+    ledger: &Ledger,
     cancel: &AtomicBool,
 ) -> Result<(), Inf> {
+    // With an output vector the window shares what is left with it; a check-only inflate
+    // can use it all.
+    let left = if out.is_some() {
+        ledger.left() / 2
+    } else {
+        ledger.left()
+    };
+    let budget = left.min(ZLIB_RESERVE);
+    let _held = ledger.charge(budget).map_err(Inf::Fatal)?;
     let dl = deflate::Limits {
         max_output,
-        max_alloc,
+        max_alloc: budget,
     };
     let mut r = deflate::zlib::Reader::with_buffer(z, std::mem::take(zbuf), &dl, cancel)
         .map_err(|e| inf(&e))?;
     let res = match out {
-        Some(o) => r.read_to_end(o).map(|_| ()),
+        Some(o) => fill(&mut r, o, max_output, ledger),
         None => {
             let mut tmp = [0u8; 512];
             loop {
                 match r.read(&mut tmp) {
                     Ok(0) => break Ok(()),
                     Ok(_) => {}
-                    Err(e) => break Err(e),
+                    Err(e) => break Err(io_inf(&e)),
                 }
             }
         }
     };
-    *zbuf = r.into_buffer();
-    res.map_err(|e| match crate::source::classify(&e) {
-        crate::source::ReadErr::Flate(f) => inf(&f),
-        _ => Inf::Bad,
-    })
+    // The window is freed here, not kept in `zbuf`: its booking ends with this call, and a
+    // kept buffer would be held without a charge until the IDAT reader books it.
+    drop(r);
+    res
 }
 
 /// Eight vectors that the `Info` of an earlier call held, so that the next call fills the
@@ -229,6 +290,7 @@ impl Pool {
         }
         info.palette.clear();
         info.header = Header::default();
+        info.trns_cancelled = false;
         info.gamma = None;
         info.chrm = None;
         info.srgb = None;

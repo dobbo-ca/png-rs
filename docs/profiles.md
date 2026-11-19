@@ -7,10 +7,16 @@
 | Bad CRC in an ancillary chunk | `Error::Checksum` | chunk dropped |
 | Bad CRC in a critical chunk | `Error::Checksum` | error |
 | Unknown chunk, critical or not | skipped | critical: error; ancillary: skipped |
-| Invalid ancillary chunk | per Go's checks | dropped, as libpng does |
+| Invalid ancillary chunk (iCCP, zTXt, iTXt, tEXt, eXIf, cICP, gAMA, cHRM, sRGB, acTL) | dropped (Go ignores the contents) | dropped, as libpng does |
 | Extra pixel data after the last row | error | ignored |
 | Bad Adler-32 or truncated zlib stream after the last row | error (`Trailing`) | error or ignored, see "The zlib tail" |
-| Ancillary data over `max_metadata` | `Error::MetadataLimit` | chunk dropped |
+| Ancillary data over `max_metadata` | chunk dropped | chunk dropped |
+
+Ancillary chunks never fail a decode in the Go profile, as Go ignores their contents: a malformed,
+over-limit or over-budget one is dropped (CRC and order checks stay as they are). zTXt and iTXt are
+not inflated (the raw chunk is kept); iCCP is inflated for `Info`, and a profile that fails or does
+not fit is dropped. `read_info` follows the same rule. Every kept text chunk counts at least 16
+bytes against `max_metadata`.
 
 The Go profile keeps Go's chunk order checks, the 4096-byte buffered IDAT reader (so checksum and
 zlib errors come in Go's order), and the "too much pixel data" and "not enough pixel data" checks.
@@ -60,3 +66,19 @@ uses the last byte its own zlib reader had taken after the last row (`Pos::used`
 decode a little further than zlib needs, so a damaged stream whose last symbols straddle two pieces
 can be judged one piece too late (an error where libpng warns). Valid streams are not affected.
 `Profile::Go` is unchanged.
+
+## Libpng chunk rules
+
+As libpng 1.6.44's `png_read_info` / `png_read_end` (`pngrutil.c`, `pngset.c`):
+
+- An unknown ancillary chunk before IHDR is skipped (`png_handle_unknown` does not look for
+  IHDR; its CRC is checked). A chunk that libpng has a handler for (PLTE, IDAT, IEND, tRNS, tEXt,
+  gAMA, ... ) fails with "missing IHDR"; an unknown critical chunk fails.
+- A second PLTE is an error ("duplicate"), also after IDAT; this is checked before the "after
+  IDAT" rule that ignores a first PLTE that comes late.
+- A PLTE with no entry is "Invalid palette", an error for RGB, RGBA and indexed images (a gray
+  image ignores its PLTE).
+- tRNS: dropped when it is late (after IDAT), a duplicate, of the wrong length, on an image with
+  alpha, or (indexed) before PLTE or longer than the palette. For an RGB image a PLTE that comes
+  after the tRNS cancels the colour key (`num_trans = 0`): `Info::trns` still holds the chunk, but
+  `Info::has_trns` is false and the Eight output has no alpha channel.

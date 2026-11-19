@@ -108,3 +108,79 @@ jobs:
           path: corpus/${{ matrix.target }}
           retention-days: 14
           if-no-files-found: ignore
+
+  # The NEON unfilter kernels: unfilter_simd built for aarch64, run under qemu-user. No seeds (the
+  # input is raw rows, not a PNG).
+  fuzz-arm64:
+    if: inputs.only == '' || inputs.only == 'unfilter_simd'
+    runs-on: github-arc-runner-set
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        target: [unfilter_simd]
+    timeout-minutes: 60
+    env:
+      MAX_TOTAL_TIME: ${{ inputs.max_total_time || '600' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { lfs: false }
+      - id: app
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ vars.CI_READ_APP_ID }}
+          private-key: ${{ secrets.CI_READ_APP_KEY }}
+          owner: dobbo-ca
+          repositories: deflate-rs
+          permission-contents: read
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+        with:
+          driver: remote
+          endpoint: tcp://buildkitd.github-arc.svc.cluster.local:1234
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: .github/ci/Dockerfile
+          target: fuzz-arm64
+          load: true
+          push: false
+          secrets: |
+            gh_token=${{ steps.app.outputs.token }}
+          tags: png-fuzz-arm64:local
+          cache-from: type=gha,scope=png-rs-fuzz-arm64
+          cache-to: type=gha,mode=max,scope=png-rs-fuzz-arm64
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: corpus
+          key: fuzz-corpus-${{ matrix.target }}-arm64-${{ github.run_id }}
+          restore-keys: fuzz-corpus-${{ matrix.target }}-arm64-
+      - run: |
+          mkdir -p corpus/${{ matrix.target }}
+          docker create --name fuzz -e MAX_TOTAL_TIME -e TARGET=${{ matrix.target }} png-fuzz-arm64:local \
+            sh -c 'mkdir -p tests/fuzz/corpus/$TARGET tests/fuzz/artifacts/$TARGET &&
+            qemu-aarch64 -L /usr/aarch64-linux-gnu tests/fuzz/target/aarch64-unknown-linux-gnu/release/$TARGET \
+            tests/fuzz/corpus/$TARGET \
+            -artifact_prefix=tests/fuzz/artifacts/$TARGET/ -max_total_time=$MAX_TOTAL_TIME -max_len=65536 -timeout=120 -rss_limit_mb=2048 -malloc_limit_mb=512'
+          docker cp corpus fuzz:/src/tests/fuzz/
+          docker start -a fuzz
+      - if: failure()
+        run: docker cp fuzz:/src/tests/fuzz/artifacts/${{ matrix.target }} ./crashers
+      - if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: crashers-${{ matrix.target }}-arm64
+          path: crashers
+      - if: always()
+        run: docker cp fuzz:/src/tests/fuzz/corpus/${{ matrix.target }}/. corpus/${{ matrix.target }}/ || true
+      - if: always()
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: corpus
+          key: fuzz-corpus-${{ matrix.target }}-arm64-${{ github.run_id }}
+      - if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: corpus-${{ matrix.target }}-arm64
+          path: corpus/${{ matrix.target }}
+          retention-days: 14
+          if-no-files-found: ignore
