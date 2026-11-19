@@ -11,6 +11,17 @@ use crate::source::{at, be16, be32};
 /// libpng: the widest row it accepts (`PNG_UINT_32_MAX >> 3` less its row buffer slack).
 const LP_MAX_WIDTH: u32 = 0x1fff_ff8e;
 
+/// What a kept text chunk counts against `max_metadata` at least.
+const MIN_TEXT: usize = 16;
+
+/// The chunks libpng 1.6.44 has a handler for besides IHDR (each fails with "missing IHDR"
+/// before IHDR; any other chunk goes to `png_handle_unknown`, which does not care).
+const LP_KNOWN: [&[u8; 4]; 21] = [
+    b"PLTE", b"IDAT", b"IEND", b"tRNS", b"bKGD", b"cHRM", b"eXIf", b"gAMA", b"hIST", b"oFFs",
+    b"pCAL", b"sCAL", b"pHYs", b"sBIT", b"sRGB", b"iCCP", b"sPLT", b"tEXt", b"tIME", b"zTXt",
+    b"iTXt",
+];
+
 impl Eng<'_> {
     /// Reads and handles the next chunk.
     pub(crate) fn chunk(&mut self) -> Result<Flow, Error> {
@@ -245,7 +256,7 @@ impl Eng<'_> {
         if !typ.iter().all(u8::is_ascii_alphabetic) {
             return Err(Error::Format("invalid chunk type"));
         }
-        if !self.have_ihdr && &typ != b"IHDR" {
+        if !self.have_ihdr && LP_KNOWN.iter().any(|k| **k == typ) {
             return Err(Error::Format("missing IHDR"));
         }
         match &typ {
@@ -310,11 +321,12 @@ impl Eng<'_> {
         if !self.s.crc_matches()? {
             return Err(Error::Checksum);
         }
-        if self.have_idat {
-            return Ok(()); // out of place: ignored
-        }
+        // libpng checks a duplicate before the place: a second PLTE after IDAT is an error.
         if self.have_plte {
             return Err(Error::ChunkOrder); // duplicate
+        }
+        if self.have_idat {
+            return Ok(()); // out of place: ignored
         }
         self.have_plte = true;
         let hdr = self.info.header;
@@ -322,6 +334,10 @@ impl Eng<'_> {
             return Ok(());
         }
         let indexed = hdr.color_type == ColorType::Indexed;
+        // png_set_PLTE: no entry is "Invalid palette" (no MNG features), for every colour type.
+        if length == 0 {
+            return Err(Error::Format("Invalid palette"));
+        }
         if length > 768 || !length.is_multiple_of(3) {
             return if indexed {
                 Err(Error::Format("bad PLTE length"))
@@ -336,7 +352,13 @@ impl Eng<'_> {
             256
         };
         let n = (data.len() / 3).min(max);
-        self.set_palette(data.get(..n * 3).unwrap_or(&[]))
+        self.set_palette(data.get(..n * 3).unwrap_or(&[]))?;
+        // A tRNS that came before the palette is cancelled (png_handle_PLTE: "tRNS must be
+        // after"); the chunk stays as read.
+        if self.info.trns.is_some() {
+            self.info.trns_cancelled = true;
+        }
+        Ok(())
     }
 
     /// tRNS is ancillary: a bad CRC, a wrong place or a wrong length drops the chunk.
@@ -401,8 +423,7 @@ impl Eng<'_> {
 
     // ---- Metadata, both profiles ------------------------------------------------------------
 
-    /// Books `n` bytes of kept metadata. `Ok(false)`: over `max_metadata` and the chunk is to be
-    /// dropped (Libpng profile); the Go profile fails instead.
+    /// Books `n` bytes of kept metadata. `Ok(false)`: over `max_metadata`, the chunk is dropped.
     fn meta_charge(&mut self, n: usize) -> Result<bool, Error> {
         match self.meta_used.checked_add(n) {
             Some(t) if t <= self.limits.max_metadata => {
@@ -410,16 +431,22 @@ impl Eng<'_> {
                 self.meta_used = t;
                 Ok(true)
             }
-            _ => match self.prof {
-                Profile::Go => Err(Error::MetadataLimit),
-                Profile::Libpng => Ok(false),
-            },
+            _ => Ok(false),
         }
     }
 
     /// The chunk `typ` with checked data: keeps what `Info` holds. An invalid chunk, one in the
-    /// wrong place and a duplicate are dropped, as libpng does; every other chunk is skipped.
+    /// wrong place, a duplicate and one over a limit are dropped; every other chunk is skipped.
+    /// The Go profile ignores the contents of ancillary chunks, as Go does: nothing in one fails
+    /// the decode (a cancel still does).
     fn ancillary(&mut self, typ: [u8; 4], data: &[u8]) -> Result<(), Error> {
+        match self.keep_ancillary(typ, data) {
+            Err(Error::AllocLimit | Error::OutOfMemory) if self.prof == Profile::Go => Ok(()),
+            r => r,
+        }
+    }
+
+    fn keep_ancillary(&mut self, typ: [u8; 4], data: &[u8]) -> Result<(), Error> {
         if !self.have_ihdr {
             return Ok(());
         }
@@ -457,96 +484,96 @@ impl Eng<'_> {
         Ok(v)
     }
 
-    /// A metadata size that is over `max_metadata`: an error or a dropped chunk.
-    fn meta_limit(&self) -> Result<(), Error> {
-        match self.prof {
-            Profile::Go => Err(Error::MetadataLimit),
-            Profile::Libpng => Ok(()),
-        }
-    }
-
+    /// iCCP: the profile is inflated into a `Vec` that is booked step by step and, if the chunk
+    /// is kept, stays booked (its whole capacity) while `Info` holds it. A dropped profile is
+    /// freed and its booking given back.
     fn iccp(&mut self, data: &[u8]) -> Result<(), Error> {
         let Some((name, z)) = meta::iccp_parts(data) else {
             return Ok(());
         };
         let room = self.limits.max_metadata.saturating_sub(self.meta_used);
         let Some(room) = room.checked_sub(name.len()) else {
-            return self.meta_limit();
+            return Ok(());
         };
-        let mut profile = self.sc.pool.take(0);
+        // A fresh vector, never a pooled one: a pooled vector's capacity would be booked and
+        // starve later chunks, so a reused `Decoder` could fail where a fresh one does not.
+        let mut profile = Vec::new();
         let r = meta::inflate(
             z,
             &mut self.sc.zbuf,
             Some(&mut profile),
             room,
-            self.ledger.left(),
+            self.ledger,
             self.cancel,
         );
-        match r {
-            Ok(()) => {}
-            Err(Inf::Bad) => {
-                self.sc.pool.give(profile);
-                return Ok(());
+        let kept = match r {
+            Ok(()) => self.prof != Profile::Libpng || meta::icc_plausible(&profile),
+            Err(Inf::Bad | Inf::Limit) => false,
+            Err(Inf::Fatal(e)) => {
+                self.ledger.release(profile.capacity());
+                return Err(e);
             }
-            Err(Inf::Limit) => {
-                self.sc.pool.give(profile);
-                return self.meta_limit();
-            }
-            Err(Inf::Fatal(e)) => return Err(e),
-        }
-        if self.prof == Profile::Libpng && !meta::icc_plausible(&profile) {
-            self.sc.pool.give(profile);
+        };
+        let booked = profile.capacity();
+        if !kept {
+            self.ledger.release(booked);
             return Ok(());
         }
-        let total = name.len() + profile.capacity();
-        if let Err(e) = self.ledger.reserve(total) {
-            self.sc.pool.give(profile);
-            return Err(e);
+        let kept_name = self
+            .ledger
+            .reserve(name.len())
+            .and_then(|()| self.keep(name));
+        match kept_name {
+            Ok(name) => {
+                self.meta_used += name.len() + profile.len();
+                self.info.iccp = Some(crate::info::Iccp { name, profile });
+                Ok(())
+            }
+            Err(e) => {
+                self.ledger.release(booked);
+                Err(e)
+            }
         }
-        self.meta_used += name.len() + profile.len();
-        let name = self.keep(name)?;
-        self.info.iccp = Some(crate::info::Iccp { name, profile });
-        Ok(())
     }
 
     fn text(&mut self, kind: TextKind, data: &[u8]) -> Result<(), Error> {
         let Some(z) = meta::text_parts(kind, data) else {
             return Ok(());
         };
-        // Over the budget: no need to look inside.
+        // Every kept chunk counts at least `MIN_TEXT` bytes, so that a file of empty chunks is
+        // bounded too. Over the budget: no need to look inside.
+        let cost = data.len().max(MIN_TEXT);
         if self
             .meta_used
-            .checked_add(data.len())
+            .checked_add(cost)
             .is_none_or(|t| t > self.limits.max_metadata)
         {
-            return self.meta_limit();
+            return Ok(());
         }
-        if let Some(z) = z {
-            // A compressed text is dropped if its stream is bad; if it is merely big, it counts
-            // as good (only the raw chunk is kept).
+        // Libpng: a compressed text is dropped if its stream is bad; if it is merely big, it
+        // counts as good (only the raw chunk is kept). Go does not look inside.
+        if let (Some(z), Profile::Libpng) = (z, self.prof) {
             let room = self.limits.max_metadata.saturating_sub(self.meta_used);
-            let r = meta::inflate(
-                z,
-                &mut self.sc.zbuf,
-                None,
-                room,
-                self.ledger.left(),
-                self.cancel,
-            );
+            let r = meta::inflate(z, &mut self.sc.zbuf, None, room, self.ledger, self.cancel);
             match r {
                 Ok(()) | Err(Inf::Limit) => {}
                 Err(Inf::Bad) => return Ok(()),
                 Err(Inf::Fatal(e)) => return Err(e),
             }
         }
-        if !self.meta_charge(data.len())? {
+        if !self.meta_charge(cost)? {
             return Ok(());
         }
         let v = self.keep(data)?;
         let t = &mut self.info.text;
         if t.len() == t.capacity() {
-            self.ledger.reserve(std::mem::size_of::<Text>())?;
-            t.try_reserve_exact(1).map_err(|_| Error::OutOfMemory)?;
+            // Doubles, booked before it is allocated.
+            let add = t.capacity().max(4);
+            let bytes = add
+                .checked_mul(std::mem::size_of::<Text>())
+                .ok_or(Error::AllocLimit)?;
+            self.ledger.reserve(bytes)?;
+            t.try_reserve_exact(add).map_err(|_| Error::OutOfMemory)?;
         }
         t.push(Text { kind, data: v });
         Ok(())

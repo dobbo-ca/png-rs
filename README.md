@@ -7,7 +7,7 @@ PNG reader (itself a port of Go 1.27 `image/png`), so errors and output match it
 profile follows libpng's lenient defaults. Pure Rust, no C dependency; the only `unsafe` is the
 SIMD filter dispatch and its load/store helpers. Apache-2.0; see `NOTICE`.
 
-Dependency: `png = { git = "https://github.com/dobbo-ca/png-rs", rev = "<sha>" }`
+Dependency: `png = { git = "https://github.com/dobbo-ca/png-rs", rev = "d976dcb46ec386ed162a90ac358dd35c4dd0e2e8" }`
 
 ## Quick start
 
@@ -32,7 +32,7 @@ own output slice (`info.output_size(Format::Eight)` bytes).
 
 ## Resource limits
 
-There is no unlimited entry point. Every call takes a `Limits`, and a zero field is a real cap.
+There is no unlimited entry point. Every call takes a `Limits`, and a zero field is a real cap (except `max_threads`, where 0 means 1).
 
 | Field | Default | Unit | Over it |
 |---|---|---|---|
@@ -41,7 +41,7 @@ There is no unlimited entry point. Every call takes a `Limits`, and a zero field
 | `max_width` | 16 777 216 (`1 << 24`) | pixels | `Error::WidthLimit` |
 | `max_height` | 16 777 216 (`1 << 24`) | pixels | `Error::HeightLimit` |
 | `max_pixels` | 268 435 456 (`1 << 28`) | width x height | `Error::PixelLimit` |
-| `max_metadata` | 16 MiB | bytes of kept ancillary data (PLTE excluded) | `Error::MetadataLimit` (Go profile); chunk dropped (Libpng profile) |
+| `max_metadata` | 16 MiB | bytes of kept ancillary data (PLTE excluded) | chunk dropped (both profiles; no error) |
 
 - `max_alloc` is the enforced peak working memory of one call: all threads together, including
   the memory deflate-rs uses. Allocations are charged before they are made and released on drop.
@@ -49,7 +49,7 @@ There is no unlimited entry point. Every call takes a `Limits`, and a zero field
   them for that call only and never exceeds `max_threads`.
 - Cancellation: every decode takes `&AtomicBool`. It is checked per chunk and per row; when set,
   the call returns `Error::Cancelled`.
-- Output and errors are the same for every `max_threads` value.
+- Output and errors are the same for every `max_threads` value, except `Error::AllocLimit`: the threaded path books more memory, so a tight `max_alloc` can fail with more threads and pass with 1.
 
 ## Docs
 

@@ -54,8 +54,9 @@ pub struct Limits {
     pub max_pixels: u64,
     /// Sum of the ancillary data the decoder keeps (PLTE excluded): text chunks, eXIf, the
     /// decompressed iCCP profile, unknown nothing (unknown chunks are skipped, not kept).
-    /// Default 16 MiB. More is Error::MetadataLimit (Go profile) / chunk dropped (Libpng
-    /// profile, as libpng's chunk cache limits).
+    /// Default 16 MiB. More is a dropped chunk, in both profiles (as libpng's chunk cache
+    /// limits; the Go profile ignores ancillary contents as Go does). Every kept text chunk
+    /// counts at least 16 bytes.
     pub max_metadata: usize,
 }
 
@@ -64,6 +65,8 @@ pub enum Profile {
     /// Go 1.27 image/png and byblos-rs today (default): every chunk CRC checked, unknown
     /// chunks (critical too) skipped, extra pixel data after the last row is an error, an
     /// error after the last row (bad Adler-32, truncated stream) is an error.
+    /// The contents of ancillary chunks are ignored as Go does: a bad or over-limit one is dropped,
+    /// never an error.
     #[default]
     Go,
     /// libpng 1.6 defaults (the lenient option): a bad CRC in an ancillary chunk drops the
@@ -138,7 +141,9 @@ pub struct Decoder { /* private */ }
 
 impl Decoder {
     pub fn new() -> Self;
-    /// Chunks up to the first IDAT (PLTE/tRNS needed for Indexed) as Go's DecodeConfig.
+    /// Chunks up to the first IDAT (PLTE/tRNS needed for Indexed). Unlike Go's DecodeConfig,
+    /// which stops after IHDR (after tRNS for Indexed), every chunk up to IDAT is read and its
+    /// CRC and order are checked; an ancillary problem never fails it (it is dropped).
     pub fn read_info(&mut self, data: &[u8], opts: &Options, limits: &Limits) -> Result<&Info, Error>;
     /// Whole image into `out` (len >= info.output_size(fmt), else Error::BufferTooSmall,
     /// checked after the header). Chunks after the IDATs up to IEND are read too (Info then
@@ -169,6 +174,11 @@ pub fn read_info(data: &[u8], opts: &Options, limits: &Limits) -> Result<Info, E
     pub fn unfilter_scalar(filter: u8, bpp: usize, cur: &mut [u8], prev: &[u8]) -> bool;
     pub fn unfilter_simd(filter: u8, bpp: usize, cur: &mut [u8], prev: &[u8]) -> bool; // dispatched tier
     pub fn tier() -> &'static str;      // "scalar" | "avx2" | "neon"
+    /// decode() with the threaded inflate taken from `min_compressed` bytes of IDAT data (the
+    /// default is 4 MiB), so that the fuzz target `threads` reaches it on small inputs.
+    pub fn decode_threaded_min(data: &[u8], fmt: Format, opts: &Options, limits: &Limits,
+                               cancel: &AtomicBool, min_compressed: usize)
+        -> Result<(Info, Vec<u8>), Error>;
 }
 ```
 
@@ -177,16 +187,22 @@ the same output and the same error for every input and every thread count.
 
 ### Threads
 
-Inflate is the only stage that can pay. When `max_threads > 1`, the profile is any, the
-compressed IDAT data is at least 4 MiB and the memory for the whole filtered image plus the
-concatenated IDAT data fits in what is left of `max_alloc`: first walk every chunk to IEND
-(CRC, order, lengths; no inflate); if that walk finds nothing wrong, inflate the concatenated
-IDAT data with `deflate::zlib::decode_parallel_into(.., max_threads, ..)`, then unfilter serially.
-If the walk finds a problem, or the parallel inflate returns any error, or the inflated length
-is not exactly the length the image needs (+ anything that the profile treats as an error),
-run the serial streaming path from the start and return its result. Output and errors are thus
-the serial ones by construction. `max_threads = 1` never spawns. Tests: output equal for
-threads 1, 2, default; thread peak never above `max_threads`.
+Inflate is the only stage that can pay. After the chunks before the first IDAT are read and
+the row buffers booked, the threaded path runs when `max_threads > 1`, the IDAT chunks that follow
+each other from the first one are all in the input with at least 4 MiB of data (`PAR_MIN`, a
+parameter of the engine that `__private::decode_threaded_min` overrides), and the concatenated
+IDAT data plus the whole filtered image fit in what is left of `max_alloc`. It books both
+buffers, copies the IDAT run into one (CRC of each chunk checked; only the IDAT run is scanned),
+inflates it with `deflate::zlib::decode_parallel_into(.., max_threads, ..)`, checks the inflated
+length and that the zlib stream ends where the IDAT data ends (the last four bytes are the
+Adler-32 of the output, found once), unfilters serially, and goes on at the chunk after the IDAT
+run: the chunks up to IEND are read by the serial chunk loop. On success the buffers and their
+booking stay until the call ends. If any step fails (a CRC, any deflate error including its own
+`AllocLimit`, a length or trailer mismatch, a bad filter byte) the buffers are freed, their
+booking is given back and the serial streaming path runs from the first IDAT chunk and gives
+the result and the error. Output and errors are thus the serial ones by construction.
+`max_threads = 1` (or 0) never spawns. Tests: output equal for threads 1, 2, default; thread peak
+never above `max_threads`; the peak of memory against `max_alloc` on a 4.5 MiB file.
 
 ## Error
 

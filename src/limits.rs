@@ -9,7 +9,7 @@ pub struct Limits {
     /// allocated. More is [`Error::AllocLimit`](crate::Error::AllocLimit).
     pub max_alloc: usize,
     /// Most OS threads of one call, the calling thread included (default
-    /// `std::thread::available_parallelism`). 1 spawns no thread.
+    /// `std::thread::available_parallelism`). 1 spawns no thread; 0 is treated as 1.
     pub max_threads: usize,
     /// Most pixels per row (default `1 << 24`). More is
     /// [`Error::WidthLimit`](crate::Error::WidthLimit).
@@ -21,8 +21,8 @@ pub struct Limits {
     pub max_pixels: u64,
     /// Sum of the ancillary data the decoder keeps, in bytes (default 16 MiB): text chunks,
     /// eXIf, the decompressed iCCP profile. PLTE is not counted and unknown chunks are skipped,
-    /// not kept. More is [`Error::MetadataLimit`](crate::Error::MetadataLimit) in the Go
-    /// profile; the Libpng profile drops the chunk.
+    /// not kept. A chunk that would pass it is dropped, in both profiles (the contents of an
+    /// ancillary chunk never fail a decode).
     pub max_metadata: usize,
 }
 

@@ -18,14 +18,15 @@
 //!   is [`Error::AllocLimit`]; an allocator that refuses a size within the limit is
 //!   [`Error::OutOfMemory`].
 //! - `max_threads` (default `available_parallelism`): the most OS threads of the call, the
-//!   calling thread included. 1 spawns no thread. Only the inflate of a large image (at least
-//!   4 MiB of compressed data) uses more than one; the output is the same for every value.
+//!   calling thread included. 1 spawns no thread, and 0 is treated as 1 (it is not an error).
+//!   Only the inflate of a large image (at least 4 MiB of compressed data) uses more than one;
+//!   the output is the same for every value.
 //! - `max_width`, `max_height` (default `1 << 24`) and `max_pixels` (default `1 << 28`) are
 //!   checked as soon as IHDR is read: [`Error::WidthLimit`], [`Error::HeightLimit`],
 //!   [`Error::PixelLimit`].
 //! - `max_metadata` (bytes, default 16 MiB): the ancillary data the decoder keeps (text chunks,
-//!   eXIf, the decompressed iCCP profile). More is [`Error::MetadataLimit`] (Go profile); the
-//!   Libpng profile drops the chunk.
+//!   eXIf, the decompressed iCCP profile). A chunk that would pass it is dropped, in both
+//!   profiles: the contents of an ancillary chunk never fail a decode.
 //!
 //! The cancel flag is read per chunk and per row (and inside the inflate): a set flag is
 //! [`Error::Cancelled`].
@@ -81,7 +82,7 @@
 //! assert_eq!((info.header.width, info.header.height), (2, 1));
 //! assert_eq!(pixels, [10, 200]);
 //!
-//! // The output alone is 2 bytes, over a `max_alloc` of 1.
+//! // Every call books 1 KiB first, so a `max_alloc` of 1 byte is over the limit at once.
 //! let tight = Limits { max_alloc: 1, ..limits };
 //! let err = png::decode(&data, Format::Native, &opts, &tight, &cancel).unwrap_err();
 //! assert_eq!(err, png::Error::AllocLimit);
@@ -156,5 +157,18 @@ pub mod __private {
     /// "scalar", "avx2" or "neon".
     pub fn tier() -> &'static str {
         crate::filter::tier()
+    }
+
+    /// [`decode`](crate::decode) with the threaded inflate taken from `min_compressed` bytes of
+    /// IDAT data instead of 4 MiB, so that small inputs reach it (the fuzz crate).
+    pub fn decode_threaded_min(
+        data: &[u8],
+        fmt: crate::Format,
+        opts: &crate::Options,
+        limits: &crate::Limits,
+        cancel: &std::sync::atomic::AtomicBool,
+        min_compressed: usize,
+    ) -> Result<(crate::Info, Vec<u8>), crate::Error> {
+        crate::decoder::decode_with(data, fmt, opts, limits, cancel, min_compressed)
     }
 }

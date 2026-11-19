@@ -1,6 +1,6 @@
 # Parity
 
-All of this runs in CI only (the `parity` job). Counts marked TBD are filled from the job summary.
+All of this runs in CI only (the `parity` job). The counts below are from the `parity` job on main at d976dcb; the job summary of each run has the current ones.
 
 ## Oracles
 
@@ -22,8 +22,8 @@ libpng writes `error`). byblos writes only `.eight` and `.err`.
 |---|---|---|---|
 | PngSuite 2017jul19 | 176, committed in `tests/data/pngsuite/` | Willem van Schaik's permissive PngSuite licence (`PngSuite.LICENSE`) | committed |
 | byblos-rs fixtures | 272, committed in `tests/data/byblos/` | Apache-2.0, same owner | byblos-rs main `7131963`; committed |
-| libpng 1.6.44 `contrib/pngsuite/**`, `contrib/testpngs/**` | TBD from CI | libpng licence | `https://github.com/pnggroup/libpng/archive/refs/tags/v1.6.44.tar.gz`, SHA-256 `0ef5b633d0c65f780c4fced27ff832998e71478c13b45dfb6e94f23a82f64f7c`, 1558044 bytes |
-| image-rs/image-png 0.17.16 `tests/**` | TBD from CI | MIT OR Apache-2.0 | `https://github.com/image-rs/image-png/archive/refs/tags/v0.17.16.tar.gz`, SHA-256 `3ee432b21f90a4940c5138e612ff6748e4a9d010d0eac87a667f346a7d54fbc9`, 11234617 bytes |
+| libpng 1.6.44 `contrib/pngsuite/**`, `contrib/testpngs/**` | 405 together with the row below | libpng licence | `https://github.com/pnggroup/libpng/archive/refs/tags/v1.6.44.tar.gz`, SHA-256 `0ef5b633d0c65f780c4fced27ff832998e71478c13b45dfb6e94f23a82f64f7c`, 1558044 bytes |
+| image-rs/image-png 0.17.16 `tests/**` | (see the row above) | MIT OR Apache-2.0 | `https://github.com/image-rs/image-png/archive/refs/tags/v0.17.16.tar.gz`, SHA-256 `3ee432b21f90a4940c5138e612ff6748e4a9d010d0eac87a667f346a7d54fbc9`, 11234617 bytes |
 | Mutations | up to 2000 | n/a | made by `oracle gen`: per input 4 truncations, 8 single bit flips (2 in an IDAT payload), 2 chunk-length edits; deterministic |
 | Fuzz-grown | 0 at first | n/a | `tests/data/fuzz-grown/` |
 
@@ -44,6 +44,6 @@ Each gate is an empty `diff -r`.
 
 | | Inputs | ok | err | Compared files |
 |---|---|---|---|---|
-| libpng gate | TBD from CI | TBD from CI | TBD from CI | TBD from CI |
-| byblos gate | TBD from CI | TBD from CI | TBD from CI | TBD from CI |
-| threads gate | TBD from CI | TBD from CI | TBD from CI | TBD from CI |
+| libpng gate | 853 | 781 | 72 | 2343 (.native .eight .meta) |
+| byblos gate | 2841 (853 + 1988 mutations) | 777 | 2064 | 2841 (.eight .err) |
+| threads gate | 853 (libpng profile) and 2841 (Go profile) | as above | as above | every output file |

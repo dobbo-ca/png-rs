@@ -67,7 +67,8 @@ impl Ledger {
         Ok(Held { l: self, n })
     }
 
-    fn release(&self, n: usize) {
+    /// Gives back `n` bytes booked with [`Ledger::reserve`], for a buffer that was freed.
+    pub(crate) fn release(&self, n: usize) {
         self.used.fetch_sub(n as u64, Ordering::AcqRel);
     }
 }

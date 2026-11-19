@@ -1,6 +1,6 @@
 //! The public decoder: [`Decoder`], [`Rows`] and the one-call functions.
 
-use crate::engine::{Dst, Eng, Scratch, Zr, check_cancel};
+use crate::engine::{Dst, Eng, PAR_MIN, Scratch, Zr, check_cancel};
 use crate::error::Error;
 use crate::info::{Format, Info, Options};
 use crate::ledger::{Ledger, zeroed};
@@ -34,39 +34,39 @@ impl Decoder {
     /// chunks before the image data) and returns what they say. The pixels are not read.
     ///
     /// Enforces `max_width`, `max_height`, `max_pixels` (as soon as IHDR is read), `max_metadata`
-    /// and `max_alloc` (palette and metadata vectors).
+    /// and `max_alloc` (palette and metadata vectors). The contents of the ancillary chunks do
+    /// not fail the call in either profile: a bad or over-limit one is dropped (the Go profile
+    /// ignores them, as Go does).
     ///
     /// # Errors
     /// [`Error::NotPng`], [`Error::Checksum`], [`Error::ChunkOrder`], [`Error::Format`],
     /// [`Error::Unsupported`], [`Error::UnexpectedEof`] for a bad or cut-off file;
     /// [`Error::WidthLimit`], [`Error::HeightLimit`], [`Error::PixelLimit`],
-    /// [`Error::MetadataLimit`], [`Error::AllocLimit`] and [`Error::OutOfMemory`] for the limits.
-    /// The Libpng profile drops a bad ancillary chunk instead of failing.
+    /// [`Error::AllocLimit`] and [`Error::OutOfMemory`] for the limits.
     pub fn read_info(
         &mut self,
         data: &[u8],
         opts: &Options,
         limits: &Limits,
     ) -> Result<&Info, Error> {
-        let cancel = AtomicBool::new(false);
+        self.read_info_with(data, opts, limits, &AtomicBool::new(false))
+    }
+
+    /// [`Decoder::read_info`] with the caller's cancel flag.
+    pub(crate) fn read_info_with(
+        &mut self,
+        data: &[u8],
+        opts: &Options,
+        limits: &Limits,
+        cancel: &AtomicBool,
+    ) -> Result<&Info, Error> {
         let Decoder {
             info,
             ledger,
             pos,
             sc,
         } = self;
-        Eng::new(
-            data,
-            pos,
-            opts.profile,
-            limits,
-            &cancel,
-            ledger,
-            info,
-            sc,
-            0,
-        )?
-        .read_to_idat()?;
+        Eng::new(data, pos, opts.profile, limits, cancel, ledger, info, sc, 0)?.read_to_idat()?;
         Ok(&self.info)
     }
 
@@ -94,12 +94,12 @@ impl Decoder {
         limits: &Limits,
         cancel: &AtomicBool,
     ) -> Result<&Info, Error> {
-        self.decode_into_with(data, fmt, out, opts, limits, cancel, 0)?;
+        self.decode_into_with(data, fmt, out, opts, limits, cancel, 0, PAR_MIN)?;
         Ok(&self.info)
     }
 
     /// [`Decoder::decode_into`] with `preload` bytes of the memory budget taken by the caller
-    /// (its output buffer).
+    /// (its output buffer) and the threaded path from `par_min` bytes of IDAT data.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn decode_into_with(
         &mut self,
@@ -110,6 +110,7 @@ impl Decoder {
         limits: &Limits,
         cancel: &AtomicBool,
         preload: usize,
+        par_min: usize,
     ) -> Result<(), Error> {
         let Decoder {
             info,
@@ -128,6 +129,7 @@ impl Decoder {
             sc,
             preload,
         )?;
+        eng.par_min = par_min;
         eng.read_to_idat()?;
         let size = eng.info.output_size(fmt).ok_or(Error::AllocLimit)?;
         if out.len() < size {
@@ -339,19 +341,33 @@ pub fn decode(
     limits: &Limits,
     cancel: &AtomicBool,
 ) -> Result<(Info, Vec<u8>), Error> {
-    let mut dec = Decoder::new();
-    let size = dec
-        .read_info(data, opts, limits)?
+    decode_with(data, fmt, opts, limits, cancel, PAR_MIN)
+}
+
+/// [`decode`] with the threaded path from `par_min` bytes of IDAT data.
+pub(crate) fn decode_with(
+    data: &[u8],
+    fmt: Format,
+    opts: &Options,
+    limits: &Limits,
+    cancel: &AtomicBool,
+    par_min: usize,
+) -> Result<(Info, Vec<u8>), Error> {
+    // The first pass (header and metadata, with the caller's cancel flag) runs in a decoder of
+    // its own that is dropped before the output is allocated, so no metadata is held then.
+    let size = Decoder::new()
+        .read_info_with(data, opts, limits, cancel)?
         .output_size(fmt)
         .ok_or(Error::AllocLimit)?;
     if size > limits.max_alloc {
         return Err(Error::AllocLimit);
     }
+    let mut dec = Decoder::new();
     let mut out = Vec::new();
     out.try_reserve_exact(size)
         .map_err(|_| Error::OutOfMemory)?;
     out.resize(size, 0);
-    dec.decode_into_with(data, fmt, &mut out, opts, limits, cancel, size)?;
+    dec.decode_into_with(data, fmt, &mut out, opts, limits, cancel, size, par_min)?;
     Ok((std::mem::take(&mut dec.info), out))
 }
 

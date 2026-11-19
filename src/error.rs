@@ -32,7 +32,8 @@ pub enum Error {
     HeightLimit,
     /// `width * height` is over `Limits::max_pixels`.
     PixelLimit,
-    /// The ancillary data to keep is over `Limits::max_metadata` (Go profile).
+    /// The ancillary data to keep is over `Limits::max_metadata`. Not returned today: both
+    /// profiles drop such a chunk; the variant stays for callers that match on it.
     MetadataLimit,
     /// The working memory would pass `Limits::max_alloc`.
     AllocLimit,
