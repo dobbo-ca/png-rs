@@ -7,7 +7,7 @@ license = "Apache-2.0"
 description = "PNG decoder with strict resource limits: Go image/png behaviour and a libpng-lenient profile. Written for dobbo-ca; not a port."
 publish = false
 
-# The owner's private port, pinned by rev (never crates.io). Needs `zlib::Reader::with_buffer` /
+# The owner's private port, pinned by rev (never crates.io). Needs `zlib::Reader::with_buffer`.
 [dependencies]
 deflate = { git = "https://github.com/dobbo-ca/deflate-rs", rev = "442a2925289bc8ffc7dcf87076db8b76e645bf08" }
 

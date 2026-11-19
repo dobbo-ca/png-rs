@@ -243,7 +243,7 @@ mod tests {
 
     #[test]
     fn small_chunks() {
-        assert_eq!(gama(&[0, 0, 0x8a, 0xc8]), Some(35000));
+        assert_eq!(gama(&[0, 0, 0x88, 0xb8]), Some(35000));
         assert_eq!(gama(&[0, 0, 0, 0]), None);
         assert_eq!(gama(&[0, 0, 0]), None);
         assert_eq!(srgb(&[3]), Some(3));
