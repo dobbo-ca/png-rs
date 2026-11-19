@@ -264,7 +264,9 @@ fn known_metadata() {
     ] {
         assert_eq!(info(name).gamma, Some(gamma), "{name}");
     }
-    assert!(info("basn0g01").gamma.is_none());
+    // The basic PngSuite files carry gAMA 1.0.
+    assert_eq!(info("basn0g01").gamma, Some(100000));
+    assert!(info("exif2c08").gamma.is_none());
 
     assert!(info("ccwn2c08").chrm.is_some());
     assert!(info("ccwn3p08").chrm.is_some());
