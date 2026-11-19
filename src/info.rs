@@ -7,7 +7,9 @@ pub enum Profile {
     /// chunks (critical too) skipped, extra pixel data after the last row is an error, an
     /// error after the last row (bad Adler-32, truncated stream) is an error.
     /// The contents of ancillary chunks are ignored as Go does: a bad or over-limit one is dropped,
-    /// never an error.
+    /// never an error. A text or eXIf chunk that does not fit in what is left of `max_alloc` is
+    /// dropped too, so what `Info` keeps depends on `max_alloc` (and, for a chunk after the image
+    /// data, on whether the inflate was threaded); see docs/profiles.md.
     #[default]
     Go,
     /// libpng 1.6 defaults (the lenient option): a bad CRC in an ancillary chunk drops the

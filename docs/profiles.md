@@ -18,6 +18,15 @@ not inflated (the raw chunk is kept); iCCP is inflated for `Info`, and a profile
 not fit is dropped. `read_info` follows the same rule. Every kept text chunk counts at least 16
 bytes against `max_metadata`.
 
+In the Go profile whether an over-budget chunk is kept depends on `max_alloc`, and on the thread
+count: a tEXt, zTXt, iTXt or eXIf chunk (before or after the image data) that does not fit in what
+is left of `max_alloc` is dropped without an error, so `Info::text` or `Info::exif` can be shorter
+or empty. After a threaded inflate (`max_threads > 1`, at least 4 MiB of IDAT data) the compressed
+data and the filtered image stay booked until the call ends, so a chunk after the image data can
+be dropped there and kept with `max_threads = 1`. This is a documented limit-dependent drop, the
+same as before the IDAT chunk. It is the only way the Go profile's result depends on `max_threads`
+besides `Error::AllocLimit`. The Libpng profile returns `Error::AllocLimit` in these cases.
+
 The Go profile keeps Go's chunk order checks, the 4096-byte buffered IDAT reader (so checksum and
 zlib errors come in Go's order), and the "too much pixel data" and "not enough pixel data" checks.
 

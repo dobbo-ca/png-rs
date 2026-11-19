@@ -38,7 +38,9 @@ back, and runs the serial streaming path from the first IDAT chunk, which gives 
 the error. A cancel is the one error that is returned at once.
 
 So output and errors are the serial ones by construction, for every thread count. A memory limit
-may depend on the thread count: the threaded path needs more.
+may depend on the thread count: the threaded path needs more. In the Go profile that includes a
+text or eXIf chunk after the image data: it is dropped, not failed, when it no longer fits
+(docs/profiles.md).
 
 ## What it does not do
 

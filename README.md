@@ -49,7 +49,7 @@ There is no unlimited entry point. Every call takes a `Limits`, and a zero field
   them for that call only and never exceeds `max_threads`.
 - Cancellation: every decode takes `&AtomicBool`. It is checked per chunk and per row; when set,
   the call returns `Error::Cancelled`.
-- Output and errors are the same for every `max_threads` value, except `Error::AllocLimit`: the threaded path books more memory, so a tight `max_alloc` can fail with more threads and pass with 1.
+- Output and errors are the same for every `max_threads` value, except `Error::AllocLimit`: the threaded path books more memory, so a tight `max_alloc` can fail with more threads and pass with 1. In the Go profile a text or eXIf chunk that does not fit is dropped without an error, so `Info` can differ in the same way (docs/profiles.md).
 
 ## Docs
 

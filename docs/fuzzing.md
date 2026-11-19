@@ -11,7 +11,8 @@
 | `unfilter_simd` | dispatched SIMD tier against scalar, bit-exact |
 | `threads` | `max_threads` 1 against 4 gives equal output and errors |
 
-`threads` calls `png::__private::decode_threaded_min` with the parallel threshold at 0, so small
+`threads` calls `png::__private::decode_threaded_min` with the parallel threshold at 0 (it also
+lowers deflate-rs's 1 MiB per-worker minimum, so a few KiB split across workers), so small
 inputs take the threaded path (the real threshold is 4 MiB of compressed data, out of reach of a
 fuzzer); it skips a pair where either side is `AllocLimit`, which may depend on the thread count.
 

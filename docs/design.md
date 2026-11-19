@@ -190,7 +190,8 @@ the same output and the same error for every input and every thread count.
 Inflate is the only stage that can pay. After the chunks before the first IDAT are read and
 the row buffers booked, the threaded path runs when `max_threads > 1`, the IDAT chunks that follow
 each other from the first one are all in the input with at least 4 MiB of data (`PAR_MIN`, a
-parameter of the engine that `__private::decode_threaded_min` overrides), and the concatenated
+parameter of the engine that `__private::decode_threaded_min` overrides, together with deflate-rs's
+1 MiB per-worker minimum, via `decode_parallel_chunked_into`), and the concatenated
 IDAT data plus the whole filtered image fit in what is left of `max_alloc`. It books both
 buffers, copies the IDAT run into one (CRC of each chunk checked; only the IDAT run is scanned),
 inflates it with `deflate::zlib::decode_parallel_into(.., max_threads, ..)`, checks the inflated

@@ -27,6 +27,10 @@ pub(crate) const ZLIB_RESERVE: usize = 256 << 10;
 /// The threaded path needs at least this much compressed IDAT data.
 pub(crate) const PAR_MIN: usize = 4 << 20;
 
+/// deflate-rs's least compressed bytes per worker (its `MIN_CHUNK`), the most that a lowered
+/// threshold keeps.
+const PAR_CHUNK: usize = 1 << 20;
+
 const PNG_HEADER: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
 
 /// `Err(Cancelled)` once the flag is set.
@@ -102,6 +106,8 @@ pub(crate) struct Eng<'d> {
     pub(crate) have_idat: bool,
     /// Bytes of ancillary data kept so far.
     pub(crate) meta_used: usize,
+    /// `Text` slots of `Info::text` booked in this call (the kept `Vec` capacity is not).
+    pub(crate) text_slots: usize,
     pub(crate) conv: Conv,
     /// Bytes per output row.
     pub(crate) out_rb: usize,
@@ -147,6 +153,7 @@ impl<'d> Eng<'d> {
             have_plte: false,
             have_idat: false,
             meta_used: 0,
+            text_slots: 0,
             conv: Conv::new(&Info::default(), Format::Native, prof),
             out_rb: 0,
             bpp: 1,
@@ -444,13 +451,23 @@ impl<'d> Eng<'d> {
             max_output: need,
             max_alloc: self.ledger.left(),
         };
-        match deflate::zlib::decode_parallel_into(
-            cat,
-            filtered,
-            &dl,
-            self.limits.max_threads,
-            self.cancel,
-        ) {
+        let threads = self.limits.max_threads;
+        let r = if self.par_min >= PAR_MIN {
+            deflate::zlib::decode_parallel_into(cat, filtered, &dl, threads, self.cancel)
+        } else {
+            // Only `__private::decode_threaded_min`: deflate-rs also wants `min_chunk` bytes per
+            // worker (1 MiB), so a small threshold must lower that too or small inputs stay serial.
+            let min_chunk = self.par_min.clamp(64, PAR_CHUNK);
+            deflate::zlib::decode_parallel_chunked_into(
+                cat,
+                filtered,
+                &dl,
+                threads,
+                min_chunk,
+                self.cancel,
+            )
+        };
+        match r {
             Ok(()) => {}
             Err(deflate::Error::Cancelled) => return Err(Error::Cancelled),
             Err(_) => return Ok(false),
