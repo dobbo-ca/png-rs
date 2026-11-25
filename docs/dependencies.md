@@ -19,4 +19,4 @@ No other crate, and no C code, in `[dependencies]` or `[build-dependencies]`:
 - `libfuzzer-sys` is used only in the separate `tests/fuzz/` crate.
 - The byblos oracle in `tests/parity/byblos/` is its own Cargo crate with its own `Cargo.lock`.
 
-Git dependencies on private repos need the CI read token; see `.github/workflows/ci.yml`.
+A git dependency on a private dobbo-ca repo needs the CI read token while that repo is private; see `.github/workflows/ci.yml`.

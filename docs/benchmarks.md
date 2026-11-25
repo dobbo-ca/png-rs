@@ -6,6 +6,8 @@ prints TSV. The C tool `tests/parity/c/pngoracle.c`
 has a `bench <dir> <reps>` mode with the same TSV (`name`, `bytes`, `ns`). `bench.yml` prints
 png-rs against libpng per file-size class in the job summary. It is information only, not a gate.
 
+Numbers below were measured on a self-hosted runner. New runs use GitHub-hosted runners (ubuntu-24.04 / ubuntu-24.04-arm) and are a new baseline, not comparable with them.
+
 Results (main 08bdc94, `bench.yml` run 44492107682):
 
 ### png-rs vs libpng: decode time, ms per MB of output (lower is better)

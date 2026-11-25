@@ -29,8 +29,8 @@ workflow keeps it in an Actions cache between runs and uploads it as the `corpus
 (14 days). `tests/data/fuzz-grown/` is empty and is not written by the fuzzer; a useful input is
 copied there by hand to join the parity corpus.
 
-The `fuzz-arm64` job builds `unfilter_simd` for aarch64 (no sanitizer: ASan does not run under
-qemu-user) and runs it under qemu-user, so the NEON unfilter kernels are fuzzed against scalar. The
+The `fuzz-arm64` job builds `unfilter_simd` natively on an arm64 runner (`ubuntu-24.04-arm`, default
+sanitizer) and runs it there, so the NEON unfilter kernels are fuzzed against scalar. The
 other targets run on x86_64 only; the NEON code is not reached by them.
 
 `.github/workflows/fuzz.yml` runs on a weekly schedule (Wednesday 12:23 UTC) and on `workflow_dispatch`, never on push

@@ -1,7 +1,6 @@
 # png-rs design (v1)
 
 This is the build spec of the crate. It is binding for every module, oracle and workflow.
-Conventions: `dobbo-ca/rust-ports` `docs/conventions.md` (read all of it) and `docs/new-crates.md`.
 
 png-rs is a new crate, not a port. Its decode flow starts from byblos-rs
 `src/image/png_read.rs` (byblos-rs main `7131963`, Apache-2.0, itself a port of Go 1.27
@@ -15,7 +14,7 @@ with the output formats below and its `pdf::Mem` with the crate's own ledger.
 
 - No local builds: never run cargo build/test/check/clippy/bench/run/miri/fuzz, rustc, cc, gcc,
   python, exiftool, pngcheck or any other analysis tool on this Mac. Only edit, `cargo fmt`,
-  `cargo generate-lockfile`, git. CI on ARC is the only build.
+  `cargo generate-lockfile`, git. CI is the only build.
 - No C dependency in the crate (`[dependencies]`, `[build-dependencies]`). libpng is used only by
   the CI-only oracle tool in `tests/parity/c/`. `libfuzzer-sys` only in `tests/fuzz/`.
 - Never panic on hostile input. No `unwrap`/`expect`/`panic!`/indexing that can go out of
@@ -23,8 +22,7 @@ with the output formats below and its `pdf::Mem` with the crate's own ledger.
   `unimplemented`, `indexing_slicing` denied in non-test code; use `get`, iterators,
   `chunks_exact`, `split_at_checked`). `checked_*` arithmetic on every size from the input.
 - `#![deny(unsafe_code, unsafe_op_in_unsafe_fn, clippy::undocumented_unsafe_blocks)]` at the root;
-  `#[allow(unsafe_code)]` only on the per-tier SIMD dispatch and the load/store helper modules
-  (safe-SIMD pattern of conventions.md). Kernels are safe `#[target_feature]` fns.
+  `#[allow(unsafe_code)]` only on the per-tier SIMD dispatch and the load/store helper modules. Kernels are safe `#[target_feature]` fns.
 - Bounded allocations: charge before allocate, `try_reserve_exact`, no `vec![0; n]` on an
   unchecked `n`.
 

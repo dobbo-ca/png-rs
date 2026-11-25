@@ -18,7 +18,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   plan:
-    runs-on: github-arc-runner-set
+    runs-on: ubuntu-24.04
     outputs:
       targets: ${{ steps.p.outputs.targets }}
     steps:
@@ -33,11 +33,12 @@ jobs:
           esac
           echo "targets=[$(echo $list | sed 's/[a-z_][a-z_]*/"&"/g; s/" "/","/g')]" >> "$GITHUB_OUTPUT"
   fuzz:
+    if: (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     needs: plan
-    runs-on: github-arc-runner-set
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
-      # The ARC runners are shared (kleio CI too): two fuzz jobs at a time, at most.
+      # Two fuzz jobs at a time, at most, so the fuzz run leaves hosted runners for CI.
       max-parallel: 2
       matrix:
         target: ${{ fromJSON(needs.plan.outputs.targets) }}
@@ -56,9 +57,6 @@ jobs:
           repositories: deflate-rs
           permission-contents: read
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
-        with:
-          driver: remote
-          endpoint: tcp://buildkitd.github-arc.svc.cluster.local:1234
       - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
@@ -109,11 +107,11 @@ jobs:
           retention-days: 14
           if-no-files-found: ignore
 
-  # The NEON unfilter kernels: unfilter_simd built for aarch64, run under qemu-user. No seeds (the
+  # The NEON unfilter kernels: unfilter_simd built and run natively on an arm64 runner. No seeds (the
   # input is raw rows, not a PNG).
   fuzz-arm64:
-    if: inputs.only == '' || inputs.only == 'unfilter_simd'
-    runs-on: github-arc-runner-set
+    if: (inputs.only == '' || inputs.only == 'unfilter_simd') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-24.04-arm
     strategy:
       fail-fast: false
       max-parallel: 2
@@ -134,9 +132,6 @@ jobs:
           repositories: deflate-rs
           permission-contents: read
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
-        with:
-          driver: remote
-          endpoint: tcp://buildkitd.github-arc.svc.cluster.local:1234
       - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
@@ -158,7 +153,7 @@ jobs:
           mkdir -p corpus/${{ matrix.target }}
           docker create --name fuzz -e MAX_TOTAL_TIME -e TARGET=${{ matrix.target }} png-fuzz-arm64:local \
             sh -c 'mkdir -p tests/fuzz/corpus/$TARGET tests/fuzz/artifacts/$TARGET &&
-            qemu-aarch64 -L /usr/aarch64-linux-gnu tests/fuzz/target/aarch64-unknown-linux-gnu/release/$TARGET \
+            tests/fuzz/target/aarch64-unknown-linux-gnu/release/$TARGET \
             tests/fuzz/corpus/$TARGET \
             -artifact_prefix=tests/fuzz/artifacts/$TARGET/ -max_total_time=$MAX_TOTAL_TIME -max_len=65536 -timeout=120 -rss_limit_mb=2048 -malloc_limit_mb=512'
           docker cp corpus fuzz:/src/tests/fuzz/

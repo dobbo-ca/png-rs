@@ -5,9 +5,9 @@
 #                                         by its path relative to <root> with / replaced by __
 #   run.sh full <report-dir>              the three gates on tests/data + /data/x + mutations
 #   run.sh ref <out-dir>                  png-oracle on PngSuite, both profiles, one thread
-#   run.sh arm <ref-dir>                  the aarch64 oracle (qemu) on PngSuite vs <ref-dir>
+#   run.sh arm <ref-dir>                  the aarch64 oracle (native arm64) on PngSuite vs <ref-dir>
 # Binaries: png-oracle (png-rs examples/oracle), pngoracle (libpng), byblos-oracle, and for `arm`
-# png-oracle-arm64 run by $ARM_RUN. Exit status 0 only when every gate is an empty diff.
+# png-oracle-arm64. Exit status 0 only when every gate is an empty diff.
 set -u
 W=/work
 
@@ -135,7 +135,7 @@ arm() {
     for simd in default scalar; do
       if [ $simd = scalar ]; then export PNG_SIMD=scalar; else unset PNG_SIMD; fi
       mkdir -p $W/out
-      run ${ARM_RUN:-qemu-aarch64 -L /usr/aarch64-linux-gnu} /usr/local/bin/png-oracle-arm64 --profile $p $W/in $W/out
+      run /usr/local/bin/png-oracle-arm64 --profile $p $W/in $W/out
       if diff -rq "$REP/$p" $W/out > $W/d; then echo "aarch64 $p $simd: identical to x86_64"
       else echo "aarch64 $p $simd: DIFF"; head -n 50 $W/d; bad=1; fi
       rm -rf $W/out
