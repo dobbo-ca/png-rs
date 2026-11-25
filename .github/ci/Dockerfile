@@ -1,16 +1,22 @@
-# CI image: Rust runs here, on the in-cluster BuildKit, because the ARC runner has no toolchain.
-# The crate depends on one private dobbo-ca port (deflate-rs) by git rev. Its fetch is the only step
+# CI image: Rust runs here, built with docker buildx on GitHub-hosted runners (ubuntu-24.04 for
+# x86_64, ubuntu-24.04-arm for the native arm64 stages).
+# The crate depends on dobbo-ca/deflate-rs by git rev; a read-only GitHub App token fetches it while
+# that repo is private. Its fetch is the only step
 # of the crate stages that needs the GitHub App token, passed as the BuildKit secret `gh_token`
 # (never a build arg, never left in a layer); every later step runs offline. The fuzz crate's own
 # dependencies (libfuzzer-sys from crates.io) are fetched in the same step.
 # Every tool is installed in a stage before `COPY . .`, so a new commit does not install it again,
 # and the fetch runs from the manifests and lockfiles alone.
 FROM rust:1.99.1-bookworm AS toolchain
-# gcc-aarch64-linux-gnu: the linker of `cargo build --target aarch64-unknown-linux-gnu`.
+ARG TARGETARCH
+# On x86_64, gcc-aarch64-linux-gnu is the linker of `cargo build --target aarch64-unknown-linux-gnu`
+# (the aarch64 lint and link check in `ci`). On arm64 that target is the host: no cross toolchain.
 RUN rustup component add rustfmt clippy && rustup target add aarch64-unknown-linux-gnu \
-    && apt-get update && apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu libc6-dev-arm64-cross \
-    && rm -rf /var/lib/apt/lists/*
-ENV CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
+    && if [ "$TARGETARCH" = amd64 ]; then \
+         apt-get update && apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu libc6-dev-arm64-cross \
+         && rm -rf /var/lib/apt/lists/* \
+         && printf '[target.aarch64-unknown-linux-gnu]\nlinker = "aarch64-linux-gnu-gcc"\n' >> "$CARGO_HOME/config.toml"; \
+       fi
 WORKDIR /src
 # The manifests and lockfiles of the crate and of the fuzz crate, with stub targets, so the fetch
 # is a layer that only a change to them rebuilds.
@@ -49,20 +55,15 @@ RUN --mount=type=cache,id=png-rs-target-ci,sharing=locked,target=/src/target \
 RUN --mount=type=cache,id=png-rs-target-ci,sharing=locked,target=/src/target \
     find src examples tests -name '*.rs' -exec touch {} + && cargo build --locked --release --target aarch64-unknown-linux-gnu --examples
 
-# qemu-user, for the arm64 stages (the cross gcc is in `toolchain`).
-FROM toolchain AS qemu-tools
-RUN apt-get update && apt-get install -y --no-install-recommends qemu-user \
-    && rm -rf /var/lib/apt/lists/*
-ENV CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUNNER="qemu-aarch64 -L /usr/aarch64-linux-gnu" \
-    CARGO_NET_OFFLINE=true
-
-FROM qemu-tools AS qemu-arm64
+# The arm64 stages are built natively on an arm64 runner (ubuntu-24.04-arm): no emulator.
+FROM toolchain AS native-arm64
+ENV CARGO_NET_OFFLINE=true
 COPY . .
 
-# aarch64 tests under qemu-user, only those that the target changes: the NEON unfilter kernels and
+# aarch64 tests, only those that the target changes: the NEON unfilter kernels and
 # their cross-tier tests (src/filter/tests.rs), both tiers (PNG_SIMD=scalar forces the scalar one).
-# The rest of the suite is the same code on both architectures and runs natively in `ci`.
-FROM qemu-arm64 AS arm64
+# The rest of the suite is the same code on both architectures and runs in `ci`.
+FROM native-arm64 AS arm64
 RUN --mount=type=cache,id=png-rs-target-arm64,sharing=locked,target=/src/target \
     find src examples tests -name '*.rs' -exec touch {} + \
     && cargo test --locked --target aarch64-unknown-linux-gnu --lib filter:: \
@@ -95,12 +96,16 @@ RUN --mount=type=cache,id=png-rs-target-byblos,sharing=locked,target=/byblos/tar
 # a build downloads it once. sharing=locked: two builds never download at once. Only a list of the
 # .png files reaches the layer; the stages that read the corpus mount the same cache and depend on
 # this stage through that list.
+# A cache mount is not saved to the Actions cache, and each hosted job starts a new builder, so the
+# mount is empty there. CORPUS_RUN (the workflow run id) makes the fetch run again in each build,
+# so a fetch layer restored from the Actions cache never leaves the readers with an empty mount.
 FROM debian:bookworm-slim AS data
 RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 COPY tests/parity/fetch.sh tests/parity/corpus.toml /parity/
+ARG CORPUS_RUN=0
 RUN --mount=type=cache,id=png-rs-data,target=/data,sharing=locked \
-    sh /parity/fetch.sh /parity/corpus.toml /data \
+    echo "corpus run $CORPUS_RUN" && sh /parity/fetch.sh /parity/corpus.toml /data \
     && (cd /data/x && find . -type f -name '*.png' | sort) > /data.list && wc -l /data.list
 
 # The two reference trees of png-rs on PngSuite (both profiles, one thread), x86_64: what the
@@ -128,14 +133,19 @@ RUN --mount=type=cache,id=png-rs-data,target=/data,sharing=locked,readonly \
 FROM scratch AS parity-report
 COPY --from=parity /report /
 
-# The oracle built for aarch64, run under qemu-user on PngSuite, both profiles and both PNG_SIMD
-# tiers, compared with the x86_64 trees above.
-FROM qemu-arm64 AS parity-arm64
+# The x86_64 reference trees as a build output (job parity-ref uploads them for parity-arm64).
+FROM scratch AS x86-ref-out
+COPY --from=x86-ref /ref /
+
+# The oracle built natively for aarch64, run on PngSuite, both profiles and both PNG_SIMD
+# tiers, compared with the x86_64 trees of `x86-ref-out`. The workflow passes them as the named
+# build context `x86ref`.
+FROM native-arm64 AS parity-arm64
 RUN --mount=type=cache,id=png-rs-target-arm64,sharing=locked,target=/src/target \
     find src examples tests -name '*.rs' -exec touch {} + \
     && cargo build --locked --release --target aarch64-unknown-linux-gnu --example oracle \
     && cp target/aarch64-unknown-linux-gnu/release/examples/oracle /usr/local/bin/png-oracle-arm64
-RUN --mount=type=bind,from=x86-ref,source=/ref,target=/ref,rw \
+RUN --mount=type=bind,from=x86ref,target=/ref,rw \
     sh tests/parity/run.sh arm /ref
 
 # Fuzzing (fuzz.yml): nightly and cargo-fuzz, with the targets built into the image. The workflow
@@ -153,17 +163,11 @@ RUN sh tests/parity/run.sh gather tests/fuzz/seeds tests/data pngsuite byblos \
     && for f in tests/fuzz/seeds/*; do printf '\0' >> "$f"; done \
     && cargo +nightly fuzz build --fuzz-dir tests/fuzz
 
-# unfilter_simd built for aarch64 (no sanitizer: ASan does not run under qemu-user), run under
-# qemu-aarch64 by fuzz.yml: it fuzzes the NEON unfilter kernels.
-FROM fuzz-tools AS fuzz-arm64-tools
-RUN apt-get update && apt-get install -y --no-install-recommends qemu-user g++-aarch64-linux-gnu \
-    && rm -rf /var/lib/apt/lists/* && rustup target add aarch64-unknown-linux-gnu --toolchain nightly
-ENV CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \
-    CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++
-
-FROM fuzz-arm64-tools AS fuzz-arm64
+# unfilter_simd built natively on an arm64 runner with the default sanitizer, run by fuzz.yml: it
+# fuzzes the NEON unfilter kernels.
+FROM fuzz-tools AS fuzz-arm64
 COPY . .
-RUN cargo +nightly fuzz build --fuzz-dir tests/fuzz --sanitizer none --target aarch64-unknown-linux-gnu unfilter_simd
+RUN cargo +nightly fuzz build --fuzz-dir tests/fuzz unfilter_simd
 
 # Benchmark (bench.yml): libpng (C oracle, bench mode) and examples/bench on the same corpus, in
 # one container, so the ratio compares the same machine. BENCH_RUN changes per run, so a cache hit

@@ -7,9 +7,9 @@ license = "Apache-2.0"
 description = "PNG decoder with strict resource limits: Go image/png behaviour and a libpng-lenient profile. Written for dobbo-ca; not a port."
 publish = false
 
-# The owner's private port, pinned by rev (never crates.io). Needs `zlib::Reader::with_buffer`.
+# dobbo-ca/deflate-rs, pinned by rev (never crates.io); a read-only GitHub App token fetches it while that repo is private. Needs `zlib::Reader::with_buffer`.
 [dependencies]
-deflate = { git = "https://github.com/dobbo-ca/deflate-rs", rev = "442a2925289bc8ffc7dcf87076db8b76e645bf08" }
+deflate = { git = "https://github.com/dobbo-ca/deflate-rs", rev = "211232f521f4378efd74f224df2fc05213cec94a" }
 
 # The tests decode whole images; the dependencies run optimised under `cargo test`, this crate
 # keeps overflow checks and debug assertions.

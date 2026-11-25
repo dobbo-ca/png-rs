@@ -29,7 +29,7 @@ checksum = "4e7648175b45a9a48536d676f68d918270699102aa8dab5496df06904c914600"
 [[package]]
 name = "deflate"
 version = "0.1.0"
-source = "git+https://github.com/dobbo-ca/deflate-rs?rev=442a2925289bc8ffc7dcf87076db8b76e645bf08#442a2925289bc8ffc7dcf87076db8b76e645bf08"
+source = "git+https://github.com/dobbo-ca/deflate-rs?rev=211232f521f4378efd74f224df2fc05213cec94a#211232f521f4378efd74f224df2fc05213cec94a"
 
 [[package]]
 name = "find-msvc-tools"
