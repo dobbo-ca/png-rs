@@ -1,6 +1,6 @@
 # CI image: Rust runs here, built with docker buildx on GitHub-hosted runners (ubuntu-24.04 for
 # x86_64, ubuntu-24.04-arm for the native arm64 stages).
-# The crate depends on dobbo-ca/deflate-rs by git rev; the dobbo-ca-ci-read app token fetches it while
+# The crate depends on dobbo-ca/deflate-rs by git rev; a read-only GitHub App token fetches it while
 # that repo is private. Its fetch is the only step
 # of the crate stages that needs the GitHub App token, passed as the BuildKit secret `gh_token`
 # (never a build arg, never left in a layer); every later step runs offline. The fuzz crate's own
