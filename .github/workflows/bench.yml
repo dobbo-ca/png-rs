@@ -32,7 +32,9 @@ jobs:
           target: bench-report
           push: false
           outputs: type=local,dest=bench-out
-          build-args: BENCH_RUN=${{ github.run_id }}
+          build-args: |
+            BENCH_RUN=${{ github.run_id }}
+            CORPUS_RUN=${{ github.run_id }}-${{ github.run_attempt }}
           cache-from: type=gha,scope=png-rs-bench
           cache-to: type=gha,mode=max,scope=png-rs-bench
           secrets: |

@@ -98,6 +98,7 @@ jobs:
           context: .
           file: .github/ci/Dockerfile
           target: parity-report
+          build-args: CORPUS_RUN=${{ github.run_id }}-${{ github.run_attempt }}
           push: false
           outputs: type=local,dest=parity-out
           cache-from: type=gha,scope=png-rs-parity
