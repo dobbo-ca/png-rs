@@ -10,7 +10,7 @@ All of this runs in CI only (the `parity` job). The counts below are from the `p
    into the crate. User limits are set to unlimited so libpng does not reject what png-rs decodes
    under its own limits.
 3. `tests/parity/byblos/`: a separate Cargo crate that decodes with byblos-rs at
-   `7131963a975b85b76710f61f638de9d8c7834f85` and writes `.eight` or `.err`.
+   `d0c3d7fa8da2e394ee20654c165a615c5b8ca4a6` and writes `.eight` or `.err`.
 
 Per input `<name>` the oracles write `<name>.native`, `<name>.eight` and `<name>.meta`, or
 `<name>.err` (one token: `notpng checksum chunk-order format unsupported eof zlib limit cancelled`;

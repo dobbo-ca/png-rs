@@ -297,7 +297,7 @@ Oracle tools:
    Mode `bench <dir> <reps>`: decode each file `reps` times, print TSV `name\tbytes\tns`.
    Built in a CI stage `FROM debian:bookworm` with gcc + libpng-dev; never linked into the crate.
 3. `tests/parity/byblos/` (Cargo bin crate `byblos-oracle`, own Cargo.lock, depends on byblos
-   `git = "https://github.com/dobbo-ca/byblos-rs", rev = "7131963a975b85b76710f61f638de9d8c7834f85"` full sha): decodes with
+   `git = "https://github.com/dobbo-ca/byblos-rs", rev = "d0c3d7fa8da2e394ee20654c165a615c5b8ca4a6"` full sha): decodes with
    `byblos::image::png_read::decode(data, &Limits::default(), &cancel)` and writes `.eight`
    (converted from byblos's Go image types to the Eight layout using the IHDR colour type /
    depth / tRNS presence it reads from the file itself) or `.err` (tokens above, mapped from
