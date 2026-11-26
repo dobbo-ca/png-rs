@@ -7,4 +7,4 @@ publish = false
 [workspace]
 
 [dependencies]
-byblos = { git = "https://github.com/dobbo-ca/byblos-rs", rev = "7131963a975b85b76710f61f638de9d8c7834f85" }
+byblos = { git = "https://github.com/dobbo-ca/byblos-rs", rev = "d0c3d7fa8da2e394ee20654c165a615c5b8ca4a6" }

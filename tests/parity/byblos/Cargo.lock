@@ -5,13 +5,12 @@ version = 4
 [[package]]
 name = "byblos"
 version = "0.1.0"
-source = "git+https://github.com/dobbo-ca/byblos-rs?rev=7131963a975b85b76710f61f638de9d8c7834f85#7131963a975b85b76710f61f638de9d8c7834f85"
+source = "git+https://github.com/dobbo-ca/byblos-rs?rev=d0c3d7fa8da2e394ee20654c165a615c5b8ca4a6#d0c3d7fa8da2e394ee20654c165a615c5b8ca4a6"
 dependencies = [
- "deflate 0.1.0 (git+https://github.com/dobbo-ca/deflate-rs?rev=617a5404b213cee8e0fdc42974e46d65e0a1b480)",
- "deflate 0.1.0 (git+https://github.com/dobbo-ca/deflate-rs?rev=b90e3e0295768b9e7e7382655238e0bece35923f)",
- "jpeg 0.1.0 (git+https://github.com/dobbo-ca/jpeg-rs?rev=22a2c3196d9afbd9df1e0fda2b6ca3caf590d38c)",
- "jpeg 0.1.0 (git+https://github.com/dobbo-ca/jpeg-rs?rev=24c4a5280662858ae76ca42f7203d95d3b5f873a)",
+ "deflate",
+ "jpeg",
  "pdf",
+ "png",
 ]
 
 [[package]]
@@ -49,12 +48,7 @@ checksum = "a31eee39dddec8330830986fcd7625edb5a24ec90ea038215273bbc3adb08ac6"
 [[package]]
 name = "deflate"
 version = "0.1.0"
-source = "git+https://github.com/dobbo-ca/deflate-rs?rev=617a5404b213cee8e0fdc42974e46d65e0a1b480#617a5404b213cee8e0fdc42974e46d65e0a1b480"
-
-[[package]]
-name = "deflate"
-version = "0.1.0"
-source = "git+https://github.com/dobbo-ca/deflate-rs?rev=b90e3e0295768b9e7e7382655238e0bece35923f#b90e3e0295768b9e7e7382655238e0bece35923f"
+source = "git+https://github.com/dobbo-ca/deflate-rs?rev=211232f521f4378efd74f224df2fc05213cec94a#211232f521f4378efd74f224df2fc05213cec94a"
 
 [[package]]
 name = "either"
@@ -65,15 +59,7 @@ checksum = "0e9c71c2167ca323c882b99918929403426e2373ea17242ff5653e0d5e1058be"
 [[package]]
 name = "jpeg"
 version = "0.1.0"
-source = "git+https://github.com/dobbo-ca/jpeg-rs?rev=22a2c3196d9afbd9df1e0fda2b6ca3caf590d38c#22a2c3196d9afbd9df1e0fda2b6ca3caf590d38c"
-dependencies = [
- "rayon",
-]
-
-[[package]]
-name = "jpeg"
-version = "0.1.0"
-source = "git+https://github.com/dobbo-ca/jpeg-rs?rev=24c4a5280662858ae76ca42f7203d95d3b5f873a#24c4a5280662858ae76ca42f7203d95d3b5f873a"
+source = "git+https://github.com/dobbo-ca/jpeg-rs?rev=c0cf0fcc3a5c4284bf09615cea44660247f07e99#c0cf0fcc3a5c4284bf09615cea44660247f07e99"
 dependencies = [
  "rayon",
 ]
@@ -81,11 +67,19 @@ dependencies = [
 [[package]]
 name = "pdf"
 version = "0.1.0"
-source = "git+https://github.com/dobbo-ca/pdf-rs?rev=b2d3a4dc61423258e532c9319ad665def0c6cc97#b2d3a4dc61423258e532c9319ad665def0c6cc97"
+source = "git+https://github.com/dobbo-ca/pdf-rs?rev=3854d8e878adf27dd7edfa733baa38e05adf65dd#3854d8e878adf27dd7edfa733baa38e05adf65dd"
 dependencies = [
- "deflate 0.1.0 (git+https://github.com/dobbo-ca/deflate-rs?rev=b90e3e0295768b9e7e7382655238e0bece35923f)",
- "jpeg 0.1.0 (git+https://github.com/dobbo-ca/jpeg-rs?rev=24c4a5280662858ae76ca42f7203d95d3b5f873a)",
+ "deflate",
+ "jpeg",
  "rayon",
+]
+
+[[package]]
+name = "png"
+version = "0.1.0"
+source = "git+https://github.com/dobbo-ca/png-rs?rev=1a4cd765bb78b9c81b4efe3e1f0c9427dec5d727#1a4cd765bb78b9c81b4efe3e1f0c9427dec5d727"
+dependencies = [
+ "deflate",
 ]
 
 [[package]]
